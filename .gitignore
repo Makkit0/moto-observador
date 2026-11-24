@@ -1,0 +1,33 @@
+# Pruebas locales y material que no debe publicarse
+_test/
+*.local.*
+
+# Dependencias y entornos
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Registros y resultados generados
+registros_sesion/
+resultados/
+*.log
+
+# Videos e imágenes de prueba descargados
+*.mp4
+*.webm
+*.avi
+*.mov
+
+# Paquetes y respaldos
+*.zip
+*.7z
+*.rar
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

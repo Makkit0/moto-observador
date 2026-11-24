@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Moto Observador — análisis local en el navegador</title>
+    <meta
+      name="description"
+      content="Analiza imágenes, videos y cámara local para observar personas, motocicletas, ocupantes estimados, casco y pose. Todo ocurre en tu navegador."
+    />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=20261123b" />
+  </head>
+  <body>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+    <div id="envWarning" class="wrap env-warning" hidden role="alert">
+      <p></p>
+    </div>
+
+    <header class="site-header">
+      <div class="wrap">
+        <p class="eyebrow">Análisis local · sin servidor · sin cuentas</p>
+        <h1>Moto Observador <span class="tag">web</span></h1>
+        <p class="lead">
+          Observa personas, motocicletas, ocupantes estimados, casco y pose corporal
+          opcional en una imagen, un video o una cámara local.
+        </p>
+        <p class="privacy-note">
+          <strong>Privacidad:</strong> las imágenes, los videos y los cuadros de la
+          cámara se procesan en tu navegador. No se suben a GitHub ni a otro servidor,
+          no se guardan por defecto y no se usa analítica, reconocimiento facial ni
+          lectura de placas. La cámara solo se activa cuando pulsas el botón y se
+          detiene cuando lo pides.
+        </p>
+      </div>
+    </header>
+
+    <main id="contenido" class="wrap layout">
+      <section class="card" aria-labelledby="fuente-titulo">
+        <h2 id="fuente-titulo">1. Elige una fuente</h2>
+        <div class="source-buttons" role="group" aria-label="Fuente de análisis">
+          <button id="imageBtn" class="button primary" type="button">Analizar imagen</button>
+          <button id="videoBtn" class="button" type="button">Analizar video</button>
+          <button
+            id="cameraBtn"
+            class="button"
+            type="button"
+            aria-expanded="false"
+            aria-controls="cameraPanel"
+          >
+            Usar cámara
+          </button>
+        </div>
+        <p class="hint source-hint">
+          La cámara se configura en dos pasos: pulsa <strong>Usar cámara</strong> para
+          abrir las opciones y después <strong>Iniciar cámara</strong> para conceder
+          permiso. Requiere HTTPS o <code>http://localhost</code>.
+        </p>
+        <input id="imageInput" type="file" accept="image/*" hidden />
+        <input id="videoInput" type="file" accept="video/*" hidden />
+
+        <div id="imagePanel" class="subpanel" hidden>
+          <p class="subpanel-title">Imagen seleccionada</p>
+          <p id="imageName" class="muted">Ninguna imagen.</p>
+          <button id="downloadImageBtn" class="button small" type="button" disabled>
+            Descargar imagen anotada
+          </button>
+        </div>
+
+        <div id="videoPanel" class="subpanel" hidden>
+          <p class="subpanel-title">Video seleccionado</p>
+          <p id="videoName" class="muted">Ningún video.</p>
+          <p id="videoMeta" class="muted"></p>
+          <div class="row">
+            <button id="playPauseBtn" class="button small" type="button" disabled>
+              Pausar
+            </button>
+            <button id="stopVideoBtn" class="button small" type="button" disabled>
+              Detener análisis
+            </button>
+            <button id="recordBtn" class="button small" type="button" disabled>
+              Grabar video anotado
+            </button>
+            <button id="downloadVideoBtn" class="button small" type="button" disabled>
+              Descargar video anotado
+            </button>
+          </div>
+          <p id="recordingStatus" class="recording-status" aria-live="polite"></p>
+          <p class="hint">
+            El video se reproduce en tu navegador. Si la inferencia es más lenta que
+            la reproducción, se omiten cuadros y se indica en las métricas. La
+            grabación del canvas es opcional, se inicia solo al pulsar el botón y no
+            se descarga automáticamente.
+          </p>
+        </div>
+
+        <div
+          id="cameraPanel"
+          class="subpanel camera-panel"
+          hidden
+          aria-labelledby="cameraPanelTitle"
+        >
+          <p id="cameraPanelTitle" class="subpanel-title">Configurar cámara</p>
+          <p class="hint camera-intro">
+            Paso 1: elige la cámara y la resolución. Paso 2: pulsa
+            <strong>Iniciar cámara</strong>. El navegador pedirá permiso y la captura
+            solo empieza con esa segunda acción.
+          </p>
+          <div class="grid two">
+            <label class="field">
+              <span>Cámara</span>
+              <select id="cameraSelect">
+                <option value="">Cámara predeterminada</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Resolución solicitada</span>
+              <select id="resolutionSelect">
+                <option value="320x240">320 × 240 (baja)</option>
+                <option value="640x480" selected>640 × 480 (recomendada)</option>
+                <option value="1280x720">1280 × 720 (HD)</option>
+                <option value="native">Resolución nativa</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <button id="refreshCamerasBtn" class="button small" type="button">
+              Buscar cámaras
+            </button>
+            <button id="startCameraBtn" class="button primary small" type="button">
+              Iniciar cámara
+            </button>
+            <button id="stopCameraBtn" class="button danger small" type="button" disabled>
+              Detener cámara
+            </button>
+          </div>
+          <p id="cameraStatus" class="camera-status" role="status" aria-live="polite">
+            La cámara no está activa. Pulsa «Iniciar cámara» para solicitar permiso.
+          </p>
+          <p class="hint">
+            La resolución real puede ser distinta de la solicitada; se muestra al
+            iniciar. La captura de la cámara y la frecuencia de análisis son métricas
+            distintas. Si el navegador bloquea el permiso, usa el icono de la barra de
+            direcciones y vuelve a pulsar «Iniciar cámara».
+          </p>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="ajustes-titulo">
+        <h2 id="ajustes-titulo">2. Ajustes de análisis</h2>
+        <div class="grid two">
+          <label class="field">
+            <span>Límite de FPS de análisis</span>
+            <select id="fpsSelect">
+              <option value="0">Sin límite</option>
+              <option value="1">1 FPS</option>
+              <option value="2">2 FPS</option>
+              <option value="4">4 FPS</option>
+              <option value="5" selected>5 FPS</option>
+              <option value="10">10 FPS</option>
+              <option value="15">15 FPS</option>
+              <option value="20">20 FPS</option>
+              <option value="30">30 FPS</option>
+            </select>
+          </label>
+          <div class="field">
+            <span>Umbral de confianza: <output id="confidenceValue">25%</output></span>
+            <input id="confidenceRange" type="range" min="5" max="95" step="5" value="25" />
+          </div>
+          <div class="field">
+            <span>Umbral de movimiento: <output id="movementValue">1.5%</output></span>
+            <input id="movementRange" type="range" min="5" max="100" step="5" value="15" />
+          </div>
+        </div>
+        <div class="check-row">
+          <label class="check">
+            <input id="helmetCheck" type="checkbox" checked />
+            <span>Detectar casco (modelo opcional)</span>
+          </label>
+          <label class="check">
+            <input id="poseCheck" type="checkbox" />
+            <span>Estimar pose corporal (opcional, 17 puntos COCO)</span>
+          </label>
+        </div>
+        <p id="detectorNote" class="hint">
+          La pose está desactivada por defecto y su modelo solo se descarga al
+          activarla. La primera preparación de la pose puede tardar decenas de
+          segundos en algunos equipos; después suele ser rápida. El casco se asocia
+          geométricamente a cada persona; la ausencia de una detección no demuestra
+          que no haya casco.
+        </p>
+      </section>
+
+      <section class="card viewer-card" aria-labelledby="visor-titulo">
+        <h2 id="visor-titulo">3. Visor</h2>
+        <div id="stage" class="stage" aria-label="Área de visualización">
+          <video id="liveVideo" class="media-source" playsinline muted></video>
+          <img id="stillImage" class="media-source" alt="" />
+          <canvas id="display" aria-label="Cuadro con anotaciones"></canvas>
+          <div id="placeholder" class="placeholder">
+            <p>Selecciona una imagen, un video o inicia la cámara.</p>
+            <p class="muted">El análisis se ejecuta en tu equipo.</p>
+          </div>
+        </div>
+        <div id="stats" class="stats" aria-live="polite">
+          <span>Sin análisis todavía.</span>
+        </div>
+        <div class="row">
+          <button id="downloadFrameBtn" class="button small" type="button" disabled>
+            Descargar fotograma anotado
+          </button>
+        </div>
+      </section>
+
+      <section class="card results-card" aria-labelledby="resultados-titulo">
+        <h2 id="resultados-titulo">4. Resultados del cuadro actual</h2>
+        <div id="counts" class="chips" aria-live="polite">
+          <span class="muted">Sin resultados todavía.</span>
+        </div>
+        <h3>Resumen por motocicleta</h3>
+        <div id="motos" class="moto-list">
+          <p class="muted">Sin motocicletas detectadas en este cuadro.</p>
+        </div>
+        <h3>Señales para revisión</h3>
+        <div id="events" class="event-list">
+          <p class="muted">Sin señales destacadas en este cuadro.</p>
+        </div>
+        <p class="hint">
+          Los conteos describen el cuadro o intervalo actual, no personas únicas ni el
+          total del video. Los IDs <code>T#</code> son trayectorias temporales, no
+          identidades. Ninguna señal demuestra por sí sola una infracción: revisa
+          manualmente los casos dudosos.
+        </p>
+      </section>
+
+      <section class="card" aria-labelledby="modelos-titulo">
+        <h2 id="modelos-titulo">5. Estado de los modelos</h2>
+        <ul id="modelList" class="model-list"></ul>
+        <p id="runtimeNote" class="hint">
+          ONNX Runtime Web se ejecuta en el navegador. Se intenta WebGPU y, si no está
+          disponible o falla, se usa WebAssembly (CPU).
+        </p>
+        <p id="warnings" class="warnings" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="card" aria-labelledby="registro-titulo">
+        <h2 id="registro-titulo">6. Registro de sesión de cámara</h2>
+        <p id="sessionStatus" class="muted">
+          El registro TXT se crea al iniciar la cámara y se descarga al detenerla.
+          Solo contiene fecha/hora, duración, resolución y descripciones neutrales de
+          señales; no guarda cuadros, videos, rostros, placas ni coordenadas del
+          esqueleto.
+        </p>
+        <button id="sessionDownloadBtn" class="button small" type="button" disabled>
+          Descargar registro TXT
+        </button>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <p>
+          Moto Observador web · Código fuente disponible en el repositorio. Modelos de
+          Ultralytics (AGPL-3.0 o licencia comercial) y del detector de casco
+          <em>iam-tsr/yolov8n-helmet-detection</em> (MIT declarada). Consulta el README
+          para límites, licencias y tamaños.
+        </p>
+        <p class="muted">
+          Herramienta de observación para revisión humana. No identifica personas, no
+          lee placas y no determina infracciones.
+        </p>
+      </div>
+    </footer>
+
+    <noscript>
+      <p class="wrap warning-box">
+        Esta aplicación necesita JavaScript y un navegador moderno con WebAssembly.
+      </p>
+    </noscript>
+
+    <script>
+      // Este script clásico se ejecuta incluso cuando el navegador bloquea los
+      // módulos ES (por ejemplo, al abrir index.html como file://). Sirve para
+      // explicar por qué la interfaz no responde en ese caso.
+      (function () {
+        var warning = document.getElementById("envWarning");
+        var message = warning ? warning.querySelector("p") : null;
+
+        function show(html) {
+          if (!warning || !message) return;
+          message.innerHTML = html;
+          warning.hidden = false;
+        }
+
+        if (location.protocol === "file:") {
+          show(
+            "<strong>Estás abriendo <code>index.html</code> como archivo local " +
+              "(<code>file://</code>).</strong> El navegador bloquea los módulos y la " +
+              "cámara en ese modo, por eso la interfaz no responde y no aparece la " +
+              "configuración de cámara. Sirve la carpeta por HTTP y abre " +
+              "<code>http://localhost:8123/</code>; por ejemplo, desde esta carpeta: " +
+              "<code>python -m http.server 8123</code>. También puedes publicarla en " +
+              "GitHub Pages (HTTPS). Consulta el README, sección «Para probar en local».",
+          );
+        } else {
+          window.setTimeout(function () {
+            if (!window.__motoObservadorModuleLoaded) {
+              show(
+                "<strong>La aplicación no terminó de iniciarse.</strong> Comprueba que " +
+                  "las carpetas <code>src/</code>, <code>models/</code> y " +
+                  "<code>vendor/ort/</code> estén completas y que el sitio se sirva por " +
+                  "HTTP(S). Abre la consola del navegador para ver el error de carga.",
+              );
+            }
+          }, 6000);
+        }
+      })();
+    </script>
+    <script src="vendor/ort/ort.min.js"></script>
+    <script type="module" src="src/main.js?v=20261123b"></script>
+  </body>
+</html>
