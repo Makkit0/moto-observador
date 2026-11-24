@@ -363,9 +363,17 @@ export class Detector {
    * cuadro. Devuelve detecciones en coordenadas de la fuente original.
    */
   async analyze(source, width, height, { confidence = 0.25, helmet = false, pose = false } = {}) {
+    const analyzeStarted = performance.now();
     await this.loadModel("base");
+    const preprocessStarted = performance.now();
     const prep = this.preprocessor.prepare(source, width, height);
-    const timings = { base: 0, helmet: 0, pose: 0 };
+    const timings = {
+      base: 0,
+      helmet: 0,
+      pose: 0,
+      preprocess: performance.now() - preprocessStarted,
+      total: 0,
+    };
 
     let started = performance.now();
     const baseOutput = await this.runSession("base", prep.tensor);
@@ -432,7 +440,7 @@ export class Detector {
         .map((item) => ({ ...item, kind: "motorcycle", label: "Motocicleta" })),
       helmets,
       poses,
-      timings,
+      timings: { ...timings, total: performance.now() - analyzeStarted },
       errors,
       runtime: this.describeRuntime(),
     };

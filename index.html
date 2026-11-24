@@ -9,7 +9,7 @@
       content="Analiza imágenes, videos y cámara local para observar personas, motocicletas, ocupantes estimados, casco y pose. Todo ocurre en tu navegador."
     />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20261123b" />
+    <link rel="stylesheet" href="styles.css?v=20261123c" />
   </head>
   <body>
     <a class="skip-link" href="#contenido">Saltar al contenido</a>
@@ -123,6 +123,18 @@
                 <option value="native">Resolución nativa</option>
               </select>
             </label>
+            <label class="field">
+              <span>FPS solicitados a la cámara</span>
+              <select id="captureFpsSelect">
+                <option value="0" selected>La cámara decide</option>
+                <option value="4">4 FPS</option>
+                <option value="5">5 FPS</option>
+                <option value="10">10 FPS</option>
+                <option value="15">15 FPS</option>
+                <option value="20">20 FPS</option>
+                <option value="30">30 FPS</option>
+              </select>
+            </label>
           </div>
           <div class="row">
             <button id="refreshCamerasBtn" class="button small" type="button">
@@ -144,6 +156,7 @@
             distintas. Si el navegador bloquea el permiso, usa el icono de la barra de
             direcciones y vuelve a pulsar «Iniciar cámara».
           </p>
+          <p class="hint">Los FPS solicitados son una preferencia: algunas cámaras o navegadores la ignoran. Comprueba los FPS medidos en el visor. Este ajuste es independiente del límite de FPS de análisis.</p>
         </div>
       </section>
 
@@ -164,6 +177,17 @@
               <option value="30">30 FPS</option>
             </select>
           </label>
+          <label class="field">
+            <span>Velocidad de reproducción del video</span>
+            <select id="playbackRateSelect">
+              <option value="0.5">0.5×</option>
+              <option value="0.75">0.75×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.25">1.25×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+            </select>
+          </label>
           <div class="field">
             <span>Umbral de confianza: <output id="confidenceValue">25%</output></span>
             <input id="confidenceRange" type="range" min="5" max="95" step="5" value="25" />
@@ -182,7 +206,20 @@
             <input id="poseCheck" type="checkbox" />
             <span>Estimar pose corporal (opcional, 17 puntos COCO)</span>
           </label>
+          <label class="check">
+            <input id="trackCheck" type="checkbox" checked />
+            <span>Seguir trayectorias mientras se analiza video o cámara</span>
+          </label>
+          <label class="check">
+            <input id="signalsCheck" type="checkbox" />
+            <span>Mostrar señales geométricas persistentes (solo cámara)</span>
+          </label>
+          <label class="check">
+            <input id="faceBlurCheck" type="checkbox" />
+            <span>Pixelar región aproximada de la cabeza (requiere pose)</span>
+          </label>
         </div>
+        <p id="signalsNote" class="hint">Señales temporales desactivadas. No detectan peleas, armas, intención, asaltos ni intervenciones policiales.</p>
         <p id="detectorNote" class="hint">
           La pose está desactivada por defecto y su modelo solo se descarga al
           activarla. La primera preparación de la pose puede tardar decenas de
@@ -206,6 +243,7 @@
         <div id="stats" class="stats" aria-live="polite">
           <span>Sin análisis todavía.</span>
         </div>
+        <p id="fpsWarning" class="warnings" role="status" aria-live="polite" hidden></p>
         <div class="row">
           <button id="downloadFrameBtn" class="button small" type="button" disabled>
             Descargar fotograma anotado
@@ -318,6 +356,6 @@
       })();
     </script>
     <script src="vendor/ort/ort.min.js"></script>
-    <script type="module" src="src/main.js?v=20261123b"></script>
+    <script type="module" src="src/main.js?v=20261123c"></script>
   </body>
 </html>

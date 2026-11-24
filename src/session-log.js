@@ -1,7 +1,10 @@
 // Registro TXT de una sesión de cámara. Solo texto agregado: sin cuadros,
 // sin coordenadas del esqueleto, sin rostros, placas ni identidades.
+// No se escribe una línea por cuadro: las señales se agrupan con inicio,
+// actualizaciones espaciadas y cierre.
 
 import { formatPercent, localIso, timestampForFilename } from "./utils.js";
+import { formatFps } from "./metrics.js";
 
 const UPDATE_COOLDOWN = 5;
 const CLOSE_AFTER = 2;
@@ -16,11 +19,13 @@ export class SessionLog {
     this.lines = [];
     this.active = new Map();
     this.lastCounts = null;
+    this.lastMetrics = null;
     this.lastSummary = 0;
     this.eventsStarted = 0;
     this.resolution = null;
     this.cooldown = UPDATE_COOLDOWN;
     this.finished = false;
+    this.unavailable = new Set();
     this.lines.push("Moto Observador — registro de sesión de cámara");
     this.lines.push(`Inicio: ${localIso(this.startedAt)}`);
     this.lines.push(`Cámara: ${this.cameraLabel}`);
@@ -30,13 +35,31 @@ export class SessionLog {
     );
   }
 
-  start({ resolution = null, fpsLimit = 0, models = [] } = {}) {
+  start({
+    resolution = null,
+    fpsTarget = 0,
+    captureRequested = 0,
+    captureDeclared = 0,
+    models = [],
+    runtime = "",
+    browser = "",
+  } = {}) {
     if (resolution) this.setResolution(resolution.width, resolution.height, true);
     this.lines.push(
-      `Límite de FPS de análisis: ${fpsLimit ? `${fpsLimit} FPS` : "sin límite"}`,
+      `Captura solicitada: ${captureRequested ? `${captureRequested} FPS` : "sin solicitud específica"}` +
+        ` · declarada por el navegador: ${captureDeclared ? `${captureDeclared} FPS` : "no disponible"}`,
     );
-    this.lines.push(`Modelos: ${models.join(", ") || "no disponibles"}`);
-    this.lines.push("--- Señales destacadas ---");
+    this.lines.push(
+      `Análisis objetivo: ${fpsTarget ? `${fpsTarget} FPS` : "sin límite"}`,
+    );
+    if (runtime) this.lines.push(`Runtime: ${runtime}`);
+    if (browser) this.lines.push(`Navegador: ${browser}`);
+    this.lines.push("Modelos:");
+    for (const model of models) {
+      this.lines.push(`- ${model.label}: ${model.status}`);
+      if (model.status.startsWith("no disponible")) this.unavailable.add(model.label);
+    }
+    this.lines.push("--- Señales observables (revisión humana) ---");
   }
 
   setResolution(width, height, quiet = false) {
@@ -49,6 +72,14 @@ export class SessionLog {
     this.cooldown = Math.max(1, Number(seconds) || UPDATE_COOLDOWN);
   }
 
+  noteModelError(label, message) {
+    if (this.finished || this.unavailable.has(label)) return;
+    this.unavailable.add(label);
+    this.lines.push(
+      `[${localIso()}] Función no disponible | ${label} | ${message || "error del modelo"}`,
+    );
+  }
+
   summaryText(counts) {
     return (
       `personas ${counts.personas}, motos ${counts.motocicletas}, ` +
@@ -59,23 +90,26 @@ export class SessionLog {
   }
 
   eventLine(state, event, duration) {
-    const track = event.trackId !== null && event.trackId !== undefined
-      ? `T${event.trackId}`
-      : "sin ID temporal";
-    const confidence = event.confidence !== undefined && event.confidence !== null
-      ? formatPercent(event.confidence)
-      : "no disponible";
+    const track =
+      event.trackId !== null && event.trackId !== undefined
+        ? `trayectoria T${event.trackId}`
+        : "sin ID temporal";
+    const confidence =
+      event.confidence !== undefined && event.confidence !== null
+        ? formatPercent(event.confidence)
+        : "no disponible";
     let line =
-      `[${localIso()}] ${state} | ${event.type || "señal"} | trayectoria ${track} | ` +
+      `[${localIso()}] ${state} | ${event.type || "señal"} | ${track} | ` +
       `confianza ${confidence} | duración ${Math.max(0, duration).toFixed(1)} s`;
     if (event.detail) line += ` | ${event.detail}`;
     return line;
   }
 
-  logFrame(counts, nowMs = performance.now()) {
+  logFrame(counts, nowMs = performance.now(), metrics = null) {
     if (this.finished) return;
     const now = nowMs / 1000;
     const present = new Set();
+    if (metrics) this.lastMetrics = metrics;
 
     for (const event of counts.eventos || []) {
       const key = `${event.type || "señal"}|${event.trackId ?? "sin"}`;
@@ -115,14 +149,20 @@ export class SessionLog {
 
     this.lastCounts = counts;
     if (now - this.lastSummary >= SUMMARY_INTERVAL) {
-      this.lines.push(`Resumen periódico: ${this.summaryText(counts)}`);
+      const rate = metrics
+        ? ` (${formatFps(metrics.achievedFps)} reales de análisis, objetivo ${
+            metrics.targetFps ? `${metrics.targetFps} FPS` : "sin límite"
+          })`
+        : "";
+      this.lines.push(`Resumen periódico${rate}: ${this.summaryText(counts)}`);
       this.lastSummary = now;
     }
   }
 
-  finish(reason, counts = null) {
+  finish(reason, counts = null, metrics = null) {
     if (this.finished) return this.lines.join("\n");
     if (counts) this.lastCounts = counts;
+    if (metrics) this.lastMetrics = metrics;
     const now = performance.now() / 1000;
     for (const active of this.active.values()) {
       this.lines.push(
@@ -137,10 +177,44 @@ export class SessionLog {
     if (this.resolution) {
       this.lines.push(`Resolución real al cerrar: ${this.resolution[0]}×${this.resolution[1]}`);
     }
+    if (this.lastMetrics) {
+      const metrics = this.lastMetrics;
+      this.lines.push(
+        `Análisis: objetivo ${metrics.targetFps ? `${metrics.targetFps} FPS` : "sin límite"}` +
+          ` · real ${formatFps(metrics.achievedFps)}` +
+          ` · cuadros analizados ${metrics.analyzedFrames}` +
+          ` · omitidos por inferencia ${metrics.skippedBusy}` +
+          ` · omitidos por límite ${metrics.skippedRate}`,
+      );
+      if (metrics.captureDeclared) {
+        this.lines.push(
+          `Captura declarada por el navegador: ${metrics.captureDeclared} FPS` +
+            (metrics.captureFps
+              ? ` · medida al final: ${formatFps(metrics.captureFps)}`
+              : ""),
+        );
+      }
+      if (metrics.detectionAgeMs !== null && metrics.detectionAgeMs !== undefined) {
+        this.lines.push(
+          `Antigüedad de la última detección al cerrar: ${Math.round(metrics.detectionAgeMs)} ms`,
+        );
+      }
+    }
     if (this.lastCounts) {
       this.lines.push(`Resumen final: ${this.summaryText(this.lastCounts)}`);
     }
     this.lines.push(`Eventos iniciados: ${this.eventsStarted}`);
+    if (!this.eventsStarted) {
+      this.lines.push(
+        "No se registraron señales destacadas durante la sesión. " +
+          "La ausencia de señales no demuestra que no ocurriera nada.",
+      );
+    }
+    if (this.unavailable.size) {
+      this.lines.push(
+        `Funciones no disponibles en esta sesión: ${[...this.unavailable].join(", ")}.`,
+      );
+    }
     this.lines.push("Registro cerrado.");
     this.finished = true;
     return this.lines.join("\n");

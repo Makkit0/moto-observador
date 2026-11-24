@@ -30,6 +30,14 @@ export const POSE_MATCH_MIN_IOU = 0.15;
 export const POSE_MATCH_MIN_CONTAINMENT = 0.5;
 export const SUMMARY_MAX_ROWS = 8;
 
+// Señales temporales experimentales derivadas de la pose y del seguimiento.
+// No son un modelo de acciones: son heurísticas geométricas con persistencia.
+export const SIGNAL_PERSISTENCE_MS = 1500;
+export const SIGNAL_MIN_OBSERVATIONS = 5;
+export const SIGNAL_CLOSE_MS = 2000;
+export const SIGNAL_MIN_CONFIDENCE = 0.35;
+export const SIGNAL_MIN_DISPLACEMENT_RATIO = 0.06;
+
 function deduplicate(detections) {
   const kept = [];
   for (const detection of [...detections].sort((a, b) => b.score - a.score)) {
@@ -153,21 +161,35 @@ export function poseConfidence(keypoints) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
 
-function matchPoseToPerson(poseBox, persons, used) {
-  let bestIndex = null;
-  let bestScore = 0;
-  persons.forEach((person, index) => {
-    if (used.has(index)) return;
-    const iou = boxIou(poseBox, person.box);
-    const inside = containment(poseBox, person.box);
-    if (iou < POSE_MATCH_MIN_IOU && inside < POSE_MATCH_MIN_CONTAINMENT) return;
-    const score = Math.max(iou, inside * 0.8);
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = index;
-    }
+function associatePoses(poses, persons) {
+  // Asignación global voraz: se evalúan todos los pares y se elige primero la
+  // mejor coincidencia, de modo que una pose no se asigna a la persona
+  // equivocada solo por el orden del arreglo.
+  const pairs = [];
+  poses.forEach((pose, poseIndex) => {
+    const poseArea = boxArea(pose.box);
+    persons.forEach((person, personIndex) => {
+      const iou = boxIou(pose.box, person.box);
+      const inside = containment(pose.box, person.box);
+      if (iou < POSE_MATCH_MIN_IOU && inside < POSE_MATCH_MIN_CONTAINMENT) return;
+      const personArea = boxArea(person.box);
+      // Una caja de pose mucho mayor que la persona sugiere una mala
+      // correspondencia (por ejemplo, dos personas solapadas).
+      if (personArea > 0 && poseArea > personArea * 2.5) return;
+      pairs.push({ poseIndex, personIndex, score: Math.max(iou, inside * 0.8) });
+    });
   });
-  return bestIndex;
+  pairs.sort((a, b) => b.score - a.score);
+  const usedPoses = new Set();
+  const usedPersons = new Set();
+  const assignments = [];
+  for (const pair of pairs) {
+    if (usedPoses.has(pair.poseIndex) || usedPersons.has(pair.personIndex)) continue;
+    usedPoses.add(pair.poseIndex);
+    usedPersons.add(pair.personIndex);
+    assignments.push(pair);
+  }
+  return assignments;
 }
 
 function poseDescriptor(keypoints, width, height, history) {
@@ -186,6 +208,20 @@ function poseDescriptor(keypoints, width, height, history) {
   };
 
   const notes = [];
+  const leftWrist = reliable.get(9);
+  const rightWrist = reliable.get(10);
+  const leftShoulder = reliable.get(5);
+  const rightShoulder = reliable.get(6);
+  if (leftShoulder && rightShoulder && leftWrist && rightWrist) {
+    const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+    if (
+      leftWrist.y < shoulderY - 0.02 * height &&
+      rightWrist.y < shoulderY - 0.02 * height
+    ) {
+      notes.push("manos elevadas");
+    }
+  }
+
   for (const [shoulder, wrist, side] of [
     [5, 9, "izquierdo"],
     [6, 10, "derecho"],
@@ -202,7 +238,11 @@ function poseDescriptor(keypoints, width, height, history) {
   if (shoulders && hips) {
     const dx = shoulders[0] - hips[0];
     const dy = hips[1] - shoulders[1];
-    if (dy > 0 && Math.abs(dx) / dy > 0.36) notes.push("torso inclinado");
+    if (Math.abs(dy) <= 0.4 * Math.abs(dx) && Math.abs(dx) > 0.06 * width) {
+      notes.push("postura horizontal");
+    } else if (dy > 0 && Math.abs(dx) / dy > 0.36) {
+      notes.push("torso inclinado");
+    }
   }
 
   if (history && history.length >= 3) {
@@ -285,18 +325,21 @@ function associateHelmets(persons, helmets, confidence) {
 }
 
 function personHelmetState(person, helmets, confidence) {
+  // La confianza del estado del casco debe venir del detector de casco, no de
+  // la caja de persona. Se guarda para el registro y las señales.
+  person.helmetConfidence = 0;
   if (person.score < Math.max(confidence, PERSON_ASSOC_MIN_CONF)) return "INDETERMINADO";
   const clearConf = Math.max(confidence, HELMET_CLEAR_CONF);
-  const states = new Set(
-    helmets
-      .filter(
-        (helmet) =>
-          helmet.score >= clearConf && (helmet.state === "CON CASCO" || helmet.state === "SIN CASCO"),
-      )
-      .map((helmet) => helmet.state),
+  const decisive = helmets.filter(
+    (helmet) =>
+      helmet.score >= clearConf &&
+      (helmet.state === "CON CASCO" || helmet.state === "SIN CASCO"),
   );
-  if (states.size === 1) return [...states][0];
-  return "INDETERMINADO";
+  if (!decisive.length) return "INDETERMINADO";
+  const states = new Set(decisive.map((helmet) => helmet.state));
+  if (states.size !== 1) return "INDETERMINADO";
+  person.helmetConfidence = Math.max(...decisive.map((helmet) => helmet.score));
+  return [...states][0];
 }
 
 function motorcyclePersonScore(person, motorcycle) {
@@ -374,8 +417,9 @@ function buildEvents(persons, motorcycles) {
       events.push({
         type: "persona sin casco",
         trackId: person.trackId,
-        confidence: person.score,
-        detail: "",
+        // Confianza del detector de casco que sustenta el estado.
+        confidence: person.helmetConfidence || 0,
+        detail: "detector de casco; señal para revisión, no una infracción",
       });
     }
     if (person.poseNote) {
@@ -392,8 +436,8 @@ function buildEvents(persons, motorcycles) {
       events.push({
         type: "moto con casco mixto",
         trackId: motorcycle.trackId,
-        confidence: motorcycle.score,
-        detail: "revisar personas asociadas",
+        confidence: motorcycle.helmetConfidence || motorcycle.score,
+        detail: "detector de casco; revisar personas asociadas",
       });
     }
     if (motorcycle.occupantCount !== null && motorcycle.occupantCount >= 3) {
@@ -408,19 +452,182 @@ function buildEvents(persons, motorcycles) {
   return events;
 }
 
+// --- Señales temporales experimentales -------------------------------------
+// Son heurísticas geométricas con persistencia sobre la pose y el seguimiento.
+// No clasifican intención, agresión, delito ni rol de ninguna persona.
+
+function poseSignalObservations(person, width, height) {
+  const observations = [];
+  const keypoints = person.keypoints || [];
+  if (keypoints.length !== 17) return observations;
+  const confidence = poseConfidence(keypoints);
+  if (confidence < SIGNAL_MIN_CONFIDENCE) return observations;
+  const point = (index) =>
+    keypoints[index] && keypoints[index].score >= POSE_KEYPOINT_CONF
+      ? keypoints[index]
+      : null;
+
+  const leftShoulder = point(5);
+  const rightShoulder = point(6);
+  const leftWrist = point(9);
+  const rightWrist = point(10);
+  const leftHip = point(11);
+  const rightHip = point(12);
+
+  if (leftShoulder && rightShoulder && leftWrist && rightWrist) {
+    const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+    if (
+      leftWrist.y < shoulderY - 0.02 * height &&
+      rightWrist.y < shoulderY - 0.02 * height
+    ) {
+      observations.push({
+        type: "persona con manos elevadas",
+        trackId: person.trackId,
+        confidence,
+        detail:
+          "observación de pose; puede ser saludo, ejercicio, baile, ayuda u otra acción",
+      });
+    }
+  }
+
+  if (leftShoulder && rightShoulder && leftHip && rightHip) {
+    const shoulderX = (leftShoulder.x + rightShoulder.x) / 2;
+    const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+    const hipX = (leftHip.x + rightHip.x) / 2;
+    const hipY = (leftHip.y + rightHip.y) / 2;
+    const dx = shoulderX - hipX;
+    const dy = shoulderY - hipY;
+    const boxWidth = Math.max(1, person.box[2] - person.box[0]);
+    const boxHeight = Math.max(1, person.box[3] - person.box[1]);
+    if (
+      Math.abs(dy) <= 0.4 * Math.abs(dx) &&
+      Math.abs(dx) > 0.06 * width &&
+      boxWidth / boxHeight > 0.75
+    ) {
+      observations.push({
+        type: "postura horizontal (posible persona en el suelo)",
+        trackId: person.trackId,
+        confidence,
+        detail: "estimación geométrica aproximada; revisar manualmente",
+      });
+    }
+  }
+
+  return observations;
+}
+
+function proximityObservations(persons) {
+  const observations = [];
+  for (let first = 0; first < persons.length; first += 1) {
+    for (let second = first + 1; second < persons.length; second += 1) {
+      const a = persons[first];
+      const b = persons[second];
+      if (a.trackId === null || b.trackId === null) continue;
+      const heightA = Math.max(1, a.box[3] - a.box[1]);
+      const heightB = Math.max(1, b.box[3] - b.box[1]);
+      const [ax, ay] = boxCenter(a.box);
+      const [bx, by] = boxCenter(b.box);
+      const distance = Math.hypot(ax - bx, ay - by);
+      const reference = 0.45 * ((heightA + heightB) / 2);
+      if (distance > reference) continue;
+      const confidence = Math.min(a.score, b.score);
+      for (const person of [a, b]) {
+        observations.push({
+          type: "personas muy próximas (posible interacción física)",
+          trackId: person.trackId,
+          confidence,
+          detail:
+            "proximidad espacial entre trayectorias; no implica agresión, delito ni sometimiento",
+        });
+      }
+    }
+  }
+  return observations;
+}
+
+function displacementObservations(persons, width, height) {
+  const observations = [];
+  const diagonal = Math.hypot(width, height);
+  if (diagonal <= 0) return observations;
+  for (const person of persons) {
+    if (person.trackId === null) continue;
+    const trail = person.trail || [];
+    if (trail.length < 2) continue;
+    const last = trail[trail.length - 1];
+    const previous = trail[trail.length - 2];
+    const moved = Math.hypot(last[0] - previous[0], last[1] - previous[1]);
+    if (moved >= SIGNAL_MIN_DISPLACEMENT_RATIO * diagonal) {
+      observations.push({
+        type: "desplazamiento brusco",
+        trackId: person.trackId,
+        confidence: person.score,
+        detail: "cambio de posición entre análisis consecutivos; revisar",
+      });
+    }
+  }
+  return observations;
+}
+
 export class ScenePipeline {
   constructor() {
     this.tracker = new Tracker();
     this.poseHistory = new Map();
+    this.signals = new Map();
   }
 
   reset() {
     this.tracker.reset();
     this.poseHistory.clear();
+    this.signals.clear();
   }
 
   configure({ fpsLimit } = {}) {
     this.tracker.configure(fpsLimit);
+  }
+
+  updateSignals(observations, now) {
+    const present = new Set();
+    const events = [];
+    for (const observation of observations) {
+      const key = `${observation.type}|${observation.trackId ?? "sin"}`;
+      present.add(key);
+      let signal = this.signals.get(key);
+      if (!signal) {
+        signal = {
+          type: observation.type,
+          trackId: observation.trackId ?? null,
+          first: now,
+          last: now,
+          count: 0,
+          confidence: observation.confidence,
+          detail: observation.detail || "",
+        };
+        this.signals.set(key, signal);
+      }
+      signal.last = now;
+      signal.count += 1;
+      signal.confidence = observation.confidence;
+      if (observation.detail) signal.detail = observation.detail;
+      if (
+        signal.count >= SIGNAL_MIN_OBSERVATIONS &&
+        now - signal.first >= SIGNAL_PERSISTENCE_MS
+      ) {
+        events.push({
+          type: observation.type,
+          trackId: signal.trackId,
+          confidence: signal.confidence,
+          detail: `${signal.detail} · observado ${((now - signal.first) / 1000).toFixed(1)} s`,
+          signal: true,
+        });
+      }
+    }
+    // La señal deja de presentarse cuando ya no se observa; se elimina el
+    // estado tras un margen para permitir oclusiones breves.
+    for (const [key, signal] of [...this.signals]) {
+      if (present.has(key)) continue;
+      if (now - signal.last > SIGNAL_CLOSE_MS) this.signals.delete(key);
+    }
+    return events;
   }
 
   process({
@@ -434,6 +641,7 @@ export class ScenePipeline {
     helmetEnabled = false,
     poseEnabled = false,
     track = false,
+    signalsEnabled = false,
     movementThreshold = MOVEMENT_DEFAULT_THRESHOLD,
     poseError = "",
     now = performance.now(),
@@ -446,6 +654,7 @@ export class ScenePipeline {
       movement: "",
       occupants: "",
       helmetSummary: "",
+      helmetConfidence: 0,
       occupantCount: null,
       occupantsUncertain: false,
       trail: [],
@@ -460,12 +669,9 @@ export class ScenePipeline {
 
     let poseAnalysed = false;
     if (poseEnabled && !poseError) {
-      const used = new Set();
-      for (const pose of poses) {
-        const target = matchPoseToPerson(pose.box, personList, used);
-        if (target === null) continue;
-        used.add(target);
-        const person = personList[target];
+      for (const { poseIndex, personIndex } of associatePoses(poses, personList)) {
+        const pose = poses[poseIndex];
+        const person = personList[personIndex];
         person.keypoints = pose.keypoints;
         const quality = poseQuality(pose.keypoints);
         person.poseState = quality.state;
@@ -513,6 +719,12 @@ export class ScenePipeline {
       motorcycle.helmetSummary = helmetEnabled
         ? motorcycleHelmetSummary(assigned)
         : "Casco: no analizado";
+      const decisive = assigned.filter(
+        (person) => person.state === "CON CASCO" || person.state === "SIN CASCO",
+      );
+      motorcycle.helmetConfidence = decisive.length
+        ? Math.min(...decisive.map((person) => person.helmetConfidence || 0))
+        : 0;
       if (count === 0) {
         motorcycle.occupants = uncertain[index] ? "incierto" : "no se puede determinar";
       } else if (count === 1) {
@@ -523,6 +735,16 @@ export class ScenePipeline {
         motorcycle.occupants = uncertain[index] ? "más de 2 (incierto)" : "más de 2";
       }
     });
+
+    const signalEvents = [];
+    if (signalsEnabled && track) {
+      const observations = [
+        ...personList.flatMap((person) => poseSignalObservations(person, width, height)),
+        ...proximityObservations(personList),
+        ...displacementObservations(personList, width, height),
+      ];
+      signalEvents.push(...this.updateSignals(observations, now));
+    }
 
     const counts = {
       personas: personList.length,
@@ -571,7 +793,10 @@ export class ScenePipeline {
         helmet: motorcycle.helmetSummary || "Casco: no analizado",
         movement: motorcycle.movement || "",
       })),
-      eventos: buildEvents(personList, motorcycleList),
+      eventos: [...buildEvents(personList, motorcycleList), ...signalEvents],
+      senalesTemporales: signalEvents.length,
+      senalesActivas: this.signals.size,
+      seguimientoActivo: track,
     };
 
     return { persons: personList, motorcycles: motorcycleList, helmets, counts };

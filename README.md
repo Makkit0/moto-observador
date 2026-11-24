@@ -22,8 +22,11 @@ Esta carpeta es una reescritura web independiente del proyecto de escritorio PyS
 - **Ocupantes estimados:** asociación espacial persona–moto con resultados como `1`, `2`, `más de 2`, `incierto` o `no se puede determinar`.
 - **Casco:** modelo opcional; solo se declara `CON CASCO` o `SIN CASCO` cuando hay una detección explícita con confianza suficiente. La **ausencia de una detección nunca se interpreta como “sin casco”**: queda como incierto.
 - **Pose corporal:** modelo opcional de 17 puntos COCO, con puntos confiables, pose parcial y `Pose: no determinada`. No reconoce acciones complejas.
-- **Controles:** límite de FPS de análisis, umbral de confianza, umbral de movimiento y activación/desactivación de casco y pose.
-- **Estado visible:** runtime (WebGPU o WASM), estado de cada modelo, resolución, FPS de análisis, milisegundos de inferencia, cuadros analizados y advertencias/errores.
+- **Controles de rendimiento:** resolución y FPS solicitados a la cámara (preferencias que el navegador puede ignorar), límite de FPS de análisis, velocidad de reproducción de video, umbral de confianza y umbral de movimiento. La interfaz muestra captura medida, FPS declarados por la cámara, vista previa y análisis real por separado.
+- **Seguimiento de trayectorias:** casilla para activar/desactivar IDs temporales, estelas y desplazamiento observado en video/cámara. Los IDs no identifican personas.
+- **Pose corporal:** modelo opcional de 17 puntos COCO, con pose parcial y cambios visibles de postura. Una casilla opcional muestra señales geométricas persistentes: manos elevadas, postura horizontal, proximidad entre personas y desplazamiento brusco. Estas señales no reconocen intención, peleas, asaltos, sometimiento ni intervención policial; pueden producir errores y requieren revisión humana.
+- **Pixelación aproximada de cabeza:** opción que usa puntos de pose para pixelar una región estimada. No es detección facial, no identifica a nadie y no garantiza anonimización completa. Para privacidad real, no compartas los archivos originales.
+- **Estado visible:** runtime (WebGPU o WASM), estado de cada modelo, resolución, FPS de captura/vista previa/análisis, edad de la última detección, milisegundos de inferencia, cuadros analizados y advertencias/errores.
 - **Registro TXT de cámara:** se genera al iniciar la cámara y se descarga al pulsar **Detener cámara**. Contiene fecha/hora, duración, resolución, modelos y descripciones neutrales de señales. **No contiene cuadros, video, rostros, placas, identidades ni coordenadas del esqueleto.**
 - **Descargas solo por acción del usuario:** imagen anotada, fotograma anotado, grabación del canvas y TXT. No hay descargas automáticas de resultados, salvo el TXT al detener la cámara, que es el comportamiento solicitado.
 
@@ -32,11 +35,12 @@ Esta carpeta es una reescritura web independiente del proyecto de escritorio PyS
 - No se suben imágenes, videos ni cuadros de cámara.
 - No hay analítica, cuentas, login, rastreo entre sitios ni publicidad.
 - No hay reconocimiento facial, lectura de placas, identificación de personas ni seguimiento de identidad.
+- No hay detector de armas de fuego o blancas. No se emiten etiquetas de asalto, pelea, sometimiento o actuación policial. La pose corporal no basta para inferir esas situaciones.
 - No se determina si existe una infracción; solo se muestran señales para revisión humana.
 
 ### Pendiente o no migrado
 
-- **Detector experimental de armas de fuego:** excluido de esta versión web. No se publicó su modelo porque no se pudo verificar de forma suficiente licencia, origen, exportación y comportamiento para un sitio público.
+- **Detección de armas:** no implementada. No se incluyó ningún modelo porque no se verificaron procedencia, licencia, exportación ni rendimiento en este proyecto.
 - **Validación con cámara física/PTZ:** no se dispone de hardware en este entorno. El flujo de cámara se probó con un `MediaStream` sintético, no con una cámara real.
 - **Pruebas multi-navegador y multi-equipo:** solo se probó en Chromium de escritorio en Windows 11. No se afirma compatibilidad verificada con Firefox, Safari, Edge, móviles ni otros equipos.
 - **Revisión de licencia del dataset del modelo de casco:** el modelo declara MIT, pero el dataset de origen (Roboflow) debe revisarse antes de un uso institucional.
@@ -53,7 +57,7 @@ Esta carpeta es una reescritura web independiente del proyecto de escritorio PyS
 - Navegador moderno con **JavaScript, ES modules, Canvas 2D y WebAssembly**.
 - **WebGPU** es opcional y se intenta primero. Si no está disponible o falla, se usa **WebAssembly (CPU)**.
 - Para la cámara se necesita **HTTPS** o `http://localhost`. Los navegadores no permiten `getUserMedia` en `file://` ni en HTTP no local.
-- La primera carga descarga el runtime y los modelos (unos 65 MB en total). Después el navegador puede reutilizar la caché.
+- La primera carga descarga el runtime y el modelo base; los modelos opcionales de casco y pose se solicitan al activarlos. Con todos los componentes, el total ronda 65 MB. Después el navegador puede reutilizar la caché.
 - No se necesita Python, Node, Flask, PySide6, Electron, instalador ni `.exe` para el usuario final.
 
 ### Para probar en local
@@ -104,9 +108,10 @@ Lo que **no** funciona es abrir `index.html` con doble clic (`file://`) ni compa
 3. **Usar cámara (paso 1, solo configurar):** pulsa **Usar cámara**. Se abre y enfoca el panel **Configurar cámara**, con el selector de cámara y de resolución. Este botón **no pide permiso ni enciende la cámara**; solo muestra las opciones y deja el foco en **Iniciar cámara**.
 4. **Iniciar cámara (paso 2, permiso y captura):** pulsa **Iniciar cámara**. El estado cambia de inmediato a **«Solicitando permiso…»** y el navegador muestra su aviso de permiso. Si aceptas, se abre la cámara, se actualizan los nombres de las cámaras y se muestra la **resolución real** entregada. Si rechazas o falla, el error aparece **dentro del panel** (permiso denegado, cámara no encontrada, cámara ocupada, resolución no admitida o contexto inseguro), los botones se restauran y puedes reintentar.
 5. **Detener cámara:** libera **todas** las pistas del flujo, cierra la sesión de análisis y descarga el TXT de la sesión. También puedes volver a descargar el último TXT con el botón de la sección 6.
-6. **Ajustes:** el límite de FPS es un máximo, no una garantía. El umbral de confianza afecta a las detecciones; el de movimiento se expresa como fracción de la diagonal del cuadro.
-7. **Casco y pose:** se pueden desactivar. Si se activan, sus modelos se descargan y preparan en ese momento.
-8. **Grabación de video anotado:** durante el análisis de un video, pulsa **Grabar video anotado**. La grabación empieza solo con esa acción y se descarga solo al pulsar **Descargar video anotado**. Mantén la pestaña visible.
+6. **FPS:** FPS solicitados a la cámara, límite de análisis y velocidad del video son controles distintos. La cámara puede ignorar los FPS solicitados; usa los FPS medidos que aparecen en el visor para comprobar su comportamiento. El límite de análisis es un máximo, no una garantía.
+7. **Casco, pose, seguimiento y señales:** se pueden activar o desactivar. Los modelos opcionales se descargan al activarlos. Las señales geométricas aparecen solo con la cámara, pose y seguimiento activos; no son un clasificador de acciones.
+8. **Pixelación:** al activarla se habilita la pose automáticamente. La región de cabeza es una estimación y puede dejar partes visibles; no la uses como garantía de anonimización.
+9. **Grabación de video anotado:** durante el análisis de un video, pulsa **Grabar video anotado**. La grabación empieza solo con esa acción y se descarga solo al pulsar **Descargar video anotado**. Mantén la pestaña visible.
 
 ### «Usar cámara» no es «Iniciar cámara»
 
