@@ -37,7 +37,6 @@ export class SessionLog {
 
   start({
     resolution = null,
-    fpsTarget = 0,
     captureRequested = 0,
     captureDeclared = 0,
     models = [],
@@ -54,7 +53,7 @@ export class SessionLog {
         ` · declarada por el navegador: ${captureDeclared ? `${captureDeclared} FPS` : "no disponible"}`,
     );
     this.lines.push(
-      `Análisis objetivo: ${fpsTarget ? `${fpsTarget} FPS` : "sin límite"}`,
+      "Análisis: máximo ritmo posible; procesa el cuadro más reciente y no acumula cola.",
     );
     if (runtime) this.lines.push(`Runtime: ${runtime}`);
     if (browser) this.lines.push(`Navegador: ${browser}`);
@@ -183,9 +182,7 @@ export class SessionLog {
     this.lastCounts = counts;
     if (now - this.lastSummary >= SUMMARY_INTERVAL) {
       const rate = metrics
-        ? ` (${formatFps(metrics.achievedFps)} reales de análisis, objetivo ${
-            metrics.targetFps ? `${metrics.targetFps} FPS` : "sin límite"
-          })`
+        ? ` (${formatFps(metrics.achievedFps)} reales de análisis)`
         : "";
       this.lines.push(`Resumen periódico${rate}: ${this.summaryText(counts)}`);
       this.lastSummary = now;
@@ -213,11 +210,9 @@ export class SessionLog {
     if (this.lastMetrics) {
       const metrics = this.lastMetrics;
       this.lines.push(
-        `Análisis: objetivo ${metrics.targetFps ? `${metrics.targetFps} FPS` : "sin límite"}` +
-          ` · real ${formatFps(metrics.achievedFps)}` +
+        `Análisis: máximo posible · real ${formatFps(metrics.achievedFps)}` +
           ` · cuadros analizados ${metrics.analyzedFrames}` +
-          ` · omitidos por inferencia ${metrics.skippedBusy}` +
-          ` · omitidos por límite ${metrics.skippedRate}`,
+          ` · cuadros omitidos ${metrics.skippedFrames}`,
       );
       if (metrics.captureDeclared) {
         this.lines.push(

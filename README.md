@@ -15,7 +15,7 @@ Esta carpeta es una reescritura web independiente del proyecto de escritorio PyS
 ### Funciones ejecutables
 
 - **Imagen local:** selección de archivo, inferencia, cajas y etiquetas, conteos y descarga de la imagen anotada en PNG.
-- **Video local:** reproducción, pausa, detención, análisis por cuadros con límite de FPS, descarga del fotograma anotado y grabación opcional del canvas anotado (WebM/MP4 según el navegador).
+- **Video local:** reproducción, pausa, detención, análisis al máximo ritmo que permita el equipo sin formar una cola de cuadros, descarga del fotograma anotado y grabación opcional del canvas anotado (WebM/MP4 según el navegador).
 - **Cámara local:** selección de cámara, resoluciones solicitadas 320×240, 640×480, 1280×720 o nativa; se muestra la **resolución real** entregada por el navegador. Inicio y detención explícitos.
 - **Detección:** personas y motocicletas del modelo COCO, con caja y confianza.
 - **Seguimiento temporal:** IDs `T#` de trayectoria, estelas y estado de movimiento (`EN MOVIMIENTO`, `SIN MOVIMIENTO OBSERVABLE`, `movimiento incierto`). Los IDs **no son identidades**.
@@ -24,7 +24,7 @@ Esta carpeta es una reescritura web independiente del proyecto de escritorio PyS
 - **Pose corporal:** modelo opcional de 17 puntos COCO, con puntos confiables, pose parcial y `Pose: no determinada`. No reconoce acciones complejas.
 - **Posibles armas (experimental, desactivado por defecto):** modelo de terceros con clases `gun` y `knife`. Solo dibuja una caja discontinua y una etiqueta neutra («posible arma de fuego — revisar» o «posible arma blanca (cuchillo) — revisar») con su confianza. No confirma un delito, no identifica a nadie y puede confundir juguetes, herramientas, fundas, reflejos u oclusiones. Su modelo solo se descarga al activar la casilla.
 - **Señales temporales de posible interacción (experimental):** con pose y seguimiento activos, agrupa proximidad entre dos trayectorias y movimiento intenso de muñecas o desplazamiento. Requiere persistencia (~1,5 s) y emite inicio, actualizaciones espaciadas y cierre. Son observaciones geométricas para revisión humana: también pueden ser saludo, juego, deporte, baile, ayuda u oclusión.
-- **Controles de rendimiento:** resolución y FPS solicitados a la cámara (preferencias que el navegador puede ignorar), límite de FPS de análisis, velocidad de reproducción de video, umbral de confianza y umbral de movimiento. La interfaz muestra captura medida, FPS declarados por la cámara, vista previa, análisis real, milisegundos por modelo, cuadros omitidos y antigüedad de la última detección.
+- **Controles de rendimiento:** resolución y FPS solicitados a la cámara (preferencias que el navegador puede ignorar), velocidad de reproducción del video, umbral de confianza y umbral de movimiento. La inferencia no tiene un límite manual: toma el cuadro más reciente cuando los modelos quedan libres y descarta los cuadros que llegan mientras están ocupados. La interfaz separa FPS medidos de cámara y análisis, y muestra cuadros omitidos, milisegundos por modelo y antigüedad de la última detección.
 - **Zoom digital:** recorta el cuadro para acercarlo entre 1× y 3×, con clic en el visor para recentrar. Afecta por igual a la vista previa y al cuadro analizado, de modo que las cajas coinciden con lo visible. **Reduce la resolución efectiva**, no la resolución real de la cámara.
 - **HUD compacto:** identificador corto (`P#`, `M#`), porcentaje, casco, pose, movimiento y aviso de arma en chips pequeños de 10–13 px; el chip de antigüedad solo aparece si la detección supera ~600 ms o está atrasada. Los detalles completos quedan en el panel de resultados, no encima de la escena.
 - **Seguimiento de trayectorias:** casilla para activar/desactivar IDs temporales, estelas y desplazamiento observado en video/cámara. Los IDs no identifican personas.
@@ -109,11 +109,11 @@ Lo que **no** funciona es abrir `index.html` con doble clic (`file://`) ni compa
 ## 3. Cómo se usa
 
 1. **Analizar imagen:** selecciona un archivo. El resultado aparece en el visor; el botón **Descargar imagen anotada** solo se habilita cuando hay análisis.
-2. **Analizar video:** selecciona un archivo local. Se reproduce en el navegador y se analiza a la frecuencia configurada. Si la inferencia es más lenta que la reproducción, se omiten cuadros y se muestra el FPS real de análisis.
+2. **Analizar video:** selecciona un archivo local. Se reproduce en el navegador y el análisis procesa cuadros al máximo ritmo posible. Si los modelos no alcanzan el ritmo de reproducción, se saltan cuadros intermedios y se muestra el FPS real de análisis; no se acumula una cola atrasada.
 3. **Usar cámara (paso 1, solo configurar):** pulsa **Usar cámara**. Se abre y enfoca el panel **Configurar cámara**, con el selector de cámara y de resolución. Este botón **no pide permiso ni enciende la cámara**; solo muestra las opciones y deja el foco en **Iniciar cámara**.
 4. **Iniciar cámara (paso 2, permiso y captura):** pulsa **Iniciar cámara**. El estado cambia de inmediato a **«Solicitando permiso…»** y el navegador muestra su aviso de permiso. Si aceptas, se abre la cámara, se actualizan los nombres de las cámaras y se muestra la **resolución real** entregada. Si rechazas o falla, el error aparece **dentro del panel** (permiso denegado, cámara no encontrada, cámara ocupada, resolución no admitida o contexto inseguro), los botones se restauran y puedes reintentar.
 5. **Detener cámara:** libera **todas** las pistas del flujo, cierra la sesión de análisis y descarga el TXT de la sesión. También puedes volver a descargar el último TXT con el botón de la sección 6.
-6. **FPS:** FPS solicitados a la cámara, límite de análisis y velocidad del video son controles distintos. La cámara puede ignorar los FPS solicitados; usa los FPS medidos que aparecen en el visor para comprobar su comportamiento. El límite de análisis es un máximo, no una garantía.
+6. **FPS:** el selector solo solicita la frecuencia de captura de la cámara; el navegador puede ignorarla. El análisis siempre intenta procesar lo más rápido posible y omite cuadros si no puede seguir el ritmo de la fuente. La velocidad de reproducción del archivo de video es un control separado.
 7. **Casco, pose, seguimiento, armas y señales:** se pueden activar o desactivar. Los modelos opcionales se descargan al activarlos. Las señales geométricas aparecen en video o cámara con pose y seguimiento activos; no son un clasificador de acciones. El detector de armas está desactivado por defecto y solo produce etiquetas de «posible arma — revisar».
 8. **Zoom digital:** mueve el control entre 1× y 3×. Con zoom mayor que 1×, pulsa en el visor para centrar la zona. El recorte se aplica a la vista previa y al análisis, pero reduce la resolución efectiva.
 9. **Pixelación:** al activarla se habilita la pose automáticamente. La región de cabeza es una estimación y puede dejar partes visibles; no la uses como garantía de anonimización.
@@ -258,7 +258,7 @@ Moto_Observador_Git/
 
 ## 8. Limitaciones y advertencias
 
-- **Los FPS son un máximo configurable, no una promesa.** El tiempo real depende de la GPU/CPU, del tamaño del modelo, de la resolución de la fuente y de si casco y pose están activos.
+- **El FPS real de análisis depende del equipo y de los modelos activos.** No hay un límite de FPS manual para inferencia. Si corre más lento que la fuente, se omiten cuadros en vez de acumular retraso; desactivar modelos opcionales aumenta el margen de procesamiento.
 - **Los cuadros anotados pueden ir por detrás del video** cuando la inferencia es más lenta que la reproducción. El visor sigue mostrando el video, pero las cajas corresponden al último cuadro analizado.
 - **Los IDs `T#` no identifican personas.** Cambian con oclusiones, cortes de escena, entradas/salidas y fallos de detección. Los conteos son del cuadro o intervalo actual, no personas únicas del video.
 - **La asociación de ocupantes es geométrica y aproximada.** Puede producir `incierto` o `no se puede determinar`; no determina quién conduce.
@@ -271,7 +271,7 @@ Moto_Observador_Git/
 - **La estimación de cabeza/rostro usa pose, no un detector facial.** Puede fallar, dejar partes visibles o difuminar de más. No hay reconocimiento, plantillas ni base de datos.
 - **WebGPU varía por equipo.** Si falla, se usa WASM. GitHub Pages no permite los encabezados COOP/COEP, por lo que el runtime WASM se configura con **una sola hebra**; esto puede ser más lento que un servidor con hilos.
 - **La primera carga es pesada** (unos 75 MB). La primera compilación de un modelo en WebGPU puede tardar varios segundos; en algunos equipos la primera inferencia de pose puede tardar decenas de segundos. Después suele estabilizarse.
-- **La cámara requiere HTTPS o localhost** y permiso explícito. La resolución solicitada es una preferencia; el navegador puede entregar otra. La captura de la cámara y el FPS de análisis son métricas distintas.
+- **La cámara requiere HTTPS o localhost** y permiso explícito. La resolución y los FPS solicitados son preferencias; el navegador puede entregar otros valores. Captura y análisis se miden por separado.
 - **«Usar cámara» solo configura; no enciende la cámara.** El permiso y la captura comienzan únicamente al pulsar **Iniciar cámara**, y el permiso se concede por origen (localhost y GitHub Pages son orígenes distintos).
 - **La grabación del canvas no es el video original anotado cuadro por cuadro.** Es una captura en tiempo real, sin audio, dependiente de `MediaRecorder`; puede perder cuadros y no está disponible en todos los navegadores.
 - **El TXT es un registro neutral de sesión, no una prueba pericial.** No contiene imágenes, coordenadas del esqueleto, rostros, placas ni identidades. Si cierras la pestaña antes de detener la cámara, el TXT puede no descargarse.
@@ -304,7 +304,7 @@ Moto_Observador_Git/
 | No se puede grabar el canvas | `MediaRecorder` o `captureStream` no disponibles | Usa **Descargar fotograma anotado**. |
 | El TXT no se descarga | Descargas bloqueadas o pestaña cerrada antes de detener | Permite descargas y pulsa **Detener cámara** antes de cerrar. |
 | El navegador se queda sin memoria | Video muy largo o resolución muy alta | Usa un video más corto, baja la resolución de la cámara o recarga. |
-| Las cajas van retrasadas | Inferencia más lenta que el video | Baja el FPS de análisis, desactiva pose/casco o usa un equipo más rápido. |
+| Las cajas van retrasadas | Inferencia más lenta que la fuente | Comprueba FPS de captura y análisis en el visor; desactiva modelos opcionales que no necesites. El sistema omite cuadros y evita una cola atrasada. |
 | «No se pudo cargar Posibles armas (experimental)» | `models/weapons.onnx` no está publicado o la ruta no coincide | Verifica que el archivo exista y que el repositorio lo incluya; el detector sigue desactivado si no se activa. |
 | El detector de armas marca demasiadas cosas | Modelo experimental con falsos positivos | Trátalo como pista para revisión; sube el umbral de confianza, desactívalo o ignora la señal. No acuses a nadie por una caja. |
 | No aparecen señales de interacción | Señales desactivadas, falta pose/seguimiento o no hay persistencia suficiente | Activa **Señales temporales** (habilita pose y seguimiento), usa video o cámara y mantén a las personas visibles ~1,5 s. |
@@ -322,14 +322,14 @@ Moto_Observador_Git/
 - [x] Modelos ONNX de personas/motos, pose, casco y armas experimentales, con metadatos y tamaños documentados.
 - [x] Preprocesado letterbox, decodificado YOLO y NMS en JavaScript, incluida la salida de 2 clases del modelo de armas.
 - [x] Imagen, video y cámara local; selección de cámara y resolución; resolución real visible.
-- [x] Límite de FPS, confianza, movimiento y detectores opcionales.
+- [x] FPS de cámara solicitables, inferencia al máximo ritmo posible, confianza, movimiento y detectores opcionales.
 - [x] Seguimiento, trayectorias, movimiento y asociación de ocupantes con estados inciertos.
 - [x] Casco sin inferencia por ausencia; pose con estados parciales/no determinados.
 - [x] Posibles armas con etiquetas neutras, cajas discontinuas y asociación espacial a personas.
 - [x] Señales temporales de proximidad/interacción con persistencia, inicio, actualizaciones y cierre.
 - [x] Difuminado opcional de región estimada de cabeza/rostro, sin reconocimiento facial.
 - [x] Zoom digital 1×–3× con recentrado por clic, aplicado a vista previa y análisis.
-- [x] HUD compacto para varias personas y métricas separadas de captura, vista previa, objetivo, análisis real, ms por modelo, omitidos y antigüedad.
+- [x] HUD compacto para varias personas y métricas separadas de captura, vista previa, análisis real, ms por modelo, cuadros omitidos y antigüedad.
 - [x] Visor con cajas, etiquetas, estelas y esqueleto.
 - [x] Descargas por acción del usuario: PNG de imagen, PNG de fotograma, grabación de canvas y TXT de cámara.
 - [x] Registro TXT neutral con configuración, modelos, errores, métricas y eventos con inicio/actualización/cierre; sin cuadros, video, rostros, placas, identidades ni coordenadas del esqueleto.

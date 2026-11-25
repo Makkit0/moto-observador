@@ -9,7 +9,7 @@
       content="Analiza imágenes, videos y cámara local para observar personas, motocicletas, ocupantes, casco, pose, posibles armas y señales temporales de interacción. Todo ocurre en tu navegador."
     />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20261125a" />
+    <link rel="stylesheet" href="styles.css?v=20261125b" />
   </head>
   <body>
     <a class="skip-link" href="#contenido">Saltar al contenido</a>
@@ -158,27 +158,13 @@
             distintas. Si el navegador bloquea el permiso, usa el icono de la barra de
             direcciones y vuelve a pulsar «Iniciar cámara».
           </p>
-          <p class="hint">Los FPS solicitados son una preferencia: algunas cámaras o navegadores la ignoran. Comprueba los FPS medidos en el visor. Este ajuste es independiente del límite de FPS de análisis.</p>
+          <p class="hint">Los FPS solicitados son una preferencia: algunas cámaras o navegadores la ignoran. Comprueba los FPS medidos en el visor. El análisis procesa cuadros nuevos al máximo ritmo posible; si no alcanza la fuente, omite cuadros para no acumular retraso.</p>
         </div>
       </section>
 
       <section class="card" aria-labelledby="ajustes-titulo">
         <h2 id="ajustes-titulo">2. Ajustes de análisis</h2>
         <div class="grid two">
-          <label class="field">
-            <span>Límite de FPS de análisis</span>
-            <select id="fpsSelect">
-              <option value="0">Sin límite</option>
-              <option value="1">1 FPS</option>
-              <option value="2">2 FPS</option>
-              <option value="4">4 FPS</option>
-              <option value="5" selected>5 FPS</option>
-              <option value="10">10 FPS</option>
-              <option value="15">15 FPS</option>
-              <option value="20">20 FPS</option>
-              <option value="30">30 FPS</option>
-            </select>
-          </label>
           <label class="field">
             <span>Velocidad de reproducción del video</span>
             <select id="playbackRateSelect">
@@ -389,6 +375,6 @@
       })();
     </script>
     <script src="vendor/ort/ort.min.js"></script>
-    <script type="module" src="src/main.js?v=20261125a"></script>
+    <script type="module" src="src/main.js?v=20261125b"></script>
   </body>
 </html>

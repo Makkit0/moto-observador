@@ -11,7 +11,7 @@ import {
   intersectionArea,
 } from "./utils.js";
 
-export const TRACK_IOU_THRESHOLD = 0.3;
+export const TRACK_IOU_THRESHOLD = 0.2;
 export const TRACK_MAX_AGE = 15;
 export const MOVEMENT_WINDOW = 30;
 export const MOVEMENT_TRAIL_LENGTH = 24;
@@ -76,7 +76,7 @@ class Tracker {
   constructor() {
     this.iouThreshold = TRACK_IOU_THRESHOLD;
     this.maxAge = TRACK_MAX_AGE;
-    this.historyGapLimit = 2;
+    this.historyGapLimit = 6;
     this.nextId = 1;
     this.tracks = new Map();
   }
@@ -84,13 +84,6 @@ class Tracker {
   reset() {
     this.nextId = 1;
     this.tracks.clear();
-  }
-
-  configure(fpsLimit) {
-    const fps = Number(fpsLimit) || 0;
-    this.maxAge = fps ? Math.max(3, Math.min(TRACK_MAX_AGE, Math.round(fps * 0.75))) : TRACK_MAX_AGE;
-    this.historyGapLimit = fps ? Math.max(2, Math.min(6, Math.round(fps * 0.5))) : 2;
-    this.iouThreshold = fps > 0 && fps <= 5 ? 0.2 : TRACK_IOU_THRESHOLD;
   }
 
   update(detections, width, height, threshold) {
@@ -664,10 +657,6 @@ export class ScenePipeline {
     this.tracker.reset();
     this.poseHistory.clear();
     this.signals.clear();
-  }
-
-  configure({ fpsLimit } = {}) {
-    this.tracker.configure(fpsLimit);
   }
 
   updateSignals(observations, now) {

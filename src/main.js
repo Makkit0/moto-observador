@@ -28,7 +28,7 @@ const MAX_SOURCE_SIDE = 1600;
 const STATS_INTERVAL_MS = 250;
 const OVERLAY_INTERVAL_MS = 200;
 const STALE_AFTER_MS = 1500;
-const FPS_SHORTFALL_RATIO = 0.75;
+const SOURCE_FPS_SHORTFALL_RATIO = 0.75;
 const FPS_SHORTFALL_MIN_FRAMES = 5;
 
 const el = (id) => document.getElementById(id);
@@ -52,7 +52,6 @@ const ui = {
   startCameraBtn: el("startCameraBtn"),
   stopCameraBtn: el("stopCameraBtn"),
   cameraStatus: el("cameraStatus"),
-  fpsSelect: el("fpsSelect"),
   playbackRateSelect: el("playbackRateSelect"),
   confidenceRange: el("confidenceRange"),
   confidenceValue: el("confidenceValue"),
@@ -121,7 +120,6 @@ const state = {
   analysisActive: false,
   analyzing: false,
   analysisToken: 0,
-  fpsLimit: 5,
   confidence: 0.25,
   movementThreshold: MOVEMENT_DEFAULT_THRESHOLD,
   helmetEnabled: true,
@@ -148,8 +146,6 @@ const state = {
   analysisStartedAt: 0,
   lastSceneAt: 0,
   lastFrameMs: 0,
-  skippedBusy: 0,
-  skippedRate: 0,
   nextAnalysisAt: 0,
   statsRenderedAt: 0,
   overlayRenderedAt: 0,
@@ -349,8 +345,6 @@ function resetMetrics() {
   state.analysisMeter.reset();
   state.lastSceneAt = 0;
   state.lastFrameMs = 0;
-  state.skippedBusy = 0;
-  state.skippedRate = 0;
   state.nextAnalysisAt = 0;
   state.statsRenderedAt = 0;
   state.overlayRenderedAt = 0;
@@ -549,16 +543,17 @@ function applyScene(scene) {
 function analysisMetrics() {
   const age = detectionAgeMs();
   const live = state.mode === "video" || state.mode === "camera";
+  const pending = live && state.analyzing ? 1 : 0;
   return {
-    targetFps: state.fpsLimit,
     achievedFps: state.analysisMeter.fps,
     captureFps: state.captureMeter.fps,
     previewFps: state.previewMeter.fps,
     captureRequested: state.captureRequested,
     captureDeclared: state.captureDeclared,
     captureApproximate: state.frameWatch.kind === "raf",
-    skippedBusy: state.skippedBusy,
-    skippedRate: live ? Math.max(0, state.frameSeq - state.analyzedFrames) : 0,
+    skippedFrames: live
+      ? Math.max(0, state.frameSeq - state.analyzedFrames - pending)
+      : 0,
     analyzedFrames: state.analyzedFrames,
     lastFrameMs: state.lastFrameMs,
     detectionAgeMs: age,
@@ -566,17 +561,16 @@ function analysisMetrics() {
   };
 }
 
-function fpsShortfallMessage(metrics) {
+function sourceFpsWarning(metrics) {
   if (!state.analysisActive) return "";
   if (state.mode !== "video" && state.mode !== "camera") return "";
-  if (!state.fpsLimit) return "";
   if (state.analyzedFrames < FPS_SHORTFALL_MIN_FRAMES) return "";
   const achieved = metrics.achievedFps;
-  if (!achieved) return "";
-  if (achieved >= state.fpsLimit * FPS_SHORTFALL_RATIO) return "";
+  const source = metrics.captureFps || metrics.captureDeclared;
+  if (!achieved || !source || achieved >= source * SOURCE_FPS_SHORTFALL_RATIO) return "";
   return (
-    `El análisis real (${formatFps(achieved)}) está por debajo del objetivo ` +
-    `(${state.fpsLimit} FPS). Baja el objetivo, reduce la resolución o desactiva casco/pose.`
+    `El análisis procesa ${formatFps(achieved)} frente a ${formatFps(source)} FPS de la fuente. ` +
+    "Se omiten cuadros intermedios para no acumular retraso; menos modelos activos puede aumentar el ritmo."
   );
 }
 
@@ -634,21 +628,21 @@ function updateStats(result) {
     parts.push(statPart("Captura", `${capture}${requestedCapture}`));
     parts.push(statPart("Vista previa", formatFps(metrics.previewFps)));
     parts.push(
-      statPart("Análisis objetivo", state.fpsLimit ? `${state.fpsLimit} FPS` : "sin límite"),
-    );
-    parts.push(
       statPart(
-        "Análisis real",
+        "FPS de análisis",
         formatFps(metrics.achievedFps),
-        metrics.achievedFps && state.fpsLimit && metrics.achievedFps < state.fpsLimit * FPS_SHORTFALL_RATIO
+        metrics.achievedFps &&
+          (metrics.captureFps || metrics.captureDeclared) &&
+          metrics.achievedFps <
+            (metrics.captureFps || metrics.captureDeclared) * SOURCE_FPS_SHORTFALL_RATIO
           ? "warn"
           : "",
       ),
     );
     parts.push(
       statPart(
-        "Omitidos",
-        `${metrics.skippedBusy} por inferencia · ${metrics.skippedRate} por límite`,
+        "Cuadros omitidos",
+        String(metrics.skippedFrames),
       ),
     );
     if (state.mode === "video") {
@@ -679,7 +673,7 @@ function updateStats(result) {
   ui.stats.textContent = "";
   ui.stats.append(...parts);
 
-  const shortfall = fpsShortfallMessage(metrics);
+  const shortfall = sourceFpsWarning(metrics);
   if (ui.fpsWarning) {
     ui.fpsWarning.textContent = shortfall;
     ui.fpsWarning.hidden = !shortfall;
@@ -825,10 +819,6 @@ function modelStatusList() {
   });
 }
 
-function analysisIntervalMs() {
-  return state.fpsLimit ? 1000 / state.fpsLimit : 0;
-}
-
 // Copia el cuadro más reciente a un canvas exclusivo de inferencia. Así la
 // vista previa puede seguir dibujando a 60 FPS sin arrastrar cajas al modelo.
 function captureAnalysisFrame() {
@@ -938,30 +928,28 @@ async function runAnalysisTick() {
   }
 }
 
-// Bucle único de análisis: se ejecuta en cada cuadro de pantalla, pero solo
-// lanza inferencia cuando toca y hay un cuadro nuevo. Si la inferencia sigue
-// ocupada al llegar el turno, ese turno se descarta; nunca se acumula cola.
+// Bucle único de análisis: procesa el cuadro más reciente tan pronto como el
+// modelo queda libre. Mientras hay inferencia se omiten los cuadros que llegan;
+// nunca se encolan, para evitar que el resultado se quede detrás del directo.
 function analysisLoop() {
   if (!state.analysisActive) {
     state.analysisLoopHandle = null;
     return;
   }
   const now = performance.now();
-  const interval = analysisIntervalMs();
   if (now >= state.nextAnalysisAt) {
     if (state.analyzing) {
-      // Solo tiene sentido contar turnos perdidos cuando hay un objetivo de FPS.
-      if (state.fpsLimit) state.skippedBusy += 1;
-      state.nextAnalysisAt = now + Math.max(interval, 33);
+      // Reintenta al liberar el modelo sin imponer otro intervalo de FPS.
+      state.nextAnalysisAt = now + 16;
     } else if (state.mode === "video" && ui.liveVideo.ended) {
       finishVideo("Fin del video");
       return;
     } else if (state.mode === "video" && ui.liveVideo.paused) {
       state.nextAnalysisAt = now + 200;
     } else if (state.mode !== "image" && state.frameSeq === state.lastAnalyzedSeq) {
-      state.nextAnalysisAt = now + Math.min(interval || 16, 33);
+      state.nextAnalysisAt = now + 16;
     } else {
-      state.nextAnalysisAt = now + interval;
+      state.nextAnalysisAt = now;
       runAnalysisTick();
     }
   }
@@ -1167,7 +1155,6 @@ async function loadVideoFile(file) {
   updateRecordingStatus("");
 
   pipeline.reset();
-  pipeline.configure({ fpsLimit: state.fpsLimit });
   state.analysisToken += 1;
   state.analysisStartedAt = performance.now();
   state.analyzedFrames = 0;
@@ -1311,9 +1298,9 @@ function cameraConstraints({ relaxed = false } = {}) {
       video.width = { ideal: width };
       video.height = { ideal: height };
     }
-    // La frecuencia de captura es una preferencia del navegador y no cambia el
-    // FPS de análisis. Se pide como «ideal», nunca «exact», y la resolución no
-    // se reduce para conseguirla.
+    // La frecuencia de captura es una preferencia del navegador; no fija la
+    // velocidad de inferencia. Se pide como «ideal», nunca «exact», y la
+    // resolución no se reduce para conseguirla.
     const fps = requestedCaptureFps();
     if (fps) video.frameRate = { ideal: fps };
   }
@@ -1440,7 +1427,7 @@ async function startCamera() {
     `Cámara activa · resolución real ${state.sourceWidth}×${state.sourceHeight} · ` +
       `solicitada ${ui.resolutionSelect.selectedOptions[0]?.textContent || "nativa"} · ` +
       `captura ${state.captureDeclared ? `${state.captureDeclared} FPS declarados` : "sin dato"} · ` +
-      `análisis objetivo ${state.fpsLimit ? `${state.fpsLimit} FPS` : "sin límite"}.`,
+      "análisis al máximo ritmo posible, sin cola de cuadros.",
     "ok",
   );
 
@@ -1450,7 +1437,6 @@ async function startCamera() {
   });
   state.sessionLog.start({
     resolution: { width: state.sourceWidth, height: state.sourceHeight },
-    fpsTarget: state.fpsLimit,
     captureRequested: state.captureRequested,
     captureDeclared: state.captureDeclared,
     models: modelStatusList(),
@@ -1466,7 +1452,6 @@ async function startCamera() {
   ui.sessionDownloadBtn.disabled = true;
 
   pipeline.reset();
-  pipeline.configure({ fpsLimit: state.fpsLimit });
   state.analysisToken += 1;
   state.analysisStartedAt = performance.now();
   state.analyzedFrames = 0;
@@ -1675,6 +1660,7 @@ function wireEvents() {
       }
       try {
         await ui.liveVideo.play();
+        state.nextAnalysisAt = performance.now();
         ui.playPauseBtn.textContent = "Pausar";
       } catch (error) {
         reportError("Reproducción", error);
@@ -1716,12 +1702,6 @@ function wireEvents() {
   );
   ui.startCameraBtn.addEventListener("click", startCamera);
   ui.stopCameraBtn.addEventListener("click", () => stopCamera("Detener cámara"));
-
-  ui.fpsSelect.addEventListener("change", () => {
-    state.fpsLimit = Number(ui.fpsSelect.value) || 0;
-    pipeline.configure({ fpsLimit: state.fpsLimit });
-    state.nextAnalysisAt = performance.now();
-  });
 
   ui.playbackRateSelect?.addEventListener("change", () => {
     state.playbackRate = Number(ui.playbackRateSelect.value) || 1;
@@ -1869,7 +1849,6 @@ async function init() {
   state.faceBlur = ui.faceBlurCheck ? ui.faceBlurCheck.checked : false;
   state.zoom = ui.zoomRange ? clamp(Number(ui.zoomRange.value) / 100, 1, 3) : 1;
   if (ui.zoomValue) ui.zoomValue.textContent = `${state.zoom.toFixed(1)}×`;
-  state.fpsLimit = Number(ui.fpsSelect.value) || 0;
   state.playbackRate = Number(ui.playbackRateSelect?.value) || 1;
   refreshOptionalModelBadges();
 
