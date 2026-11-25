@@ -603,3 +603,84 @@ code {
     transition: none !important;
   }
 }
+
+/* --- HUD compacto, zoom y avisos experimentales ------------------------- */
+
+.button.tiny {
+  padding: 0.32rem 0.55rem;
+  font-size: 0.8rem;
+  border-radius: 8px;
+}
+
+.zoom-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.zoom-row input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tiny-hint {
+  font-size: 0.78rem;
+  margin-top: 0.25rem;
+}
+
+/* Métricas en una sola línea compacta: el visor manda. */
+.stats {
+  gap: 0.22rem 0.65rem;
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+.stats .stat.warn {
+  color: var(--warn);
+}
+.stats .stat.warn strong {
+  color: var(--warn);
+}
+
+.chip {
+  padding: 0.3rem 0.45rem;
+}
+.chip .label {
+  font-size: 0.64rem;
+}
+.chip .value {
+  font-size: 0.92rem;
+}
+
+.results-card h3 {
+  margin: 0.7rem 0 0.35rem;
+  font-size: 0.92rem;
+}
+
+.results-card .chips {
+  gap: 0.3rem;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+}
+
+.moto-row {
+  gap: 0.15rem 0.55rem;
+  padding: 0.38rem 0.5rem;
+}
+.moto-row .detail {
+  font-size: 0.8rem;
+}
+
+.event-item {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.check-row {
+  gap: 0.55rem 1rem;
+}
+
+@media (max-width: 620px) {
+  .stats {
+    font-size: 0.72rem;
+  }
+  .chip .value {
+    font-size: 1rem;
+  }
+}

@@ -52,6 +52,44 @@ export function clipBox(box, width, height) {
 }
 
 /**
+ * Región aproximada de la cabeza/rostro a partir de los puntos de pose
+ * (nariz, ojos y orejas). No es un detector facial ni un reconocimiento:
+ * solo estima una zona para difuminarla o contarla.
+ */
+export function estimateHeadBox(person, width, height, minConfidence = 0.35) {
+  const keypoints = person?.keypoints;
+  if (!Array.isArray(keypoints) || keypoints.length !== 17) return null;
+  const reliable = keypoints
+    .map((point, index) =>
+      index <= 4 && point.score >= minConfidence ? point : null,
+    )
+    .filter(Boolean);
+  if (!reliable.length) return null;
+  const hasFace =
+    keypoints[0]?.score >= minConfidence ||
+    (keypoints[1]?.score >= minConfidence && keypoints[2]?.score >= minConfidence);
+  if (!hasFace) return null;
+
+  const xs = reliable.map((point) => point.x);
+  const ys = reliable.map((point) => point.y);
+  const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const ears =
+    keypoints[3]?.score >= minConfidence && keypoints[4]?.score >= minConfidence
+      ? Math.hypot(keypoints[3].x - keypoints[4].x, keypoints[3].y - keypoints[4].y)
+      : 0;
+  const personHeight = Math.max(1, person.box[3] - person.box[1]);
+  const size = Math.max(ears * 1.5, personHeight * 0.2, 20);
+  const box = [
+    clamp(centerX - size / 2, 0, width),
+    clamp(centerY - size * 0.6, 0, height),
+    clamp(centerX + size / 2, 0, width),
+    clamp(centerY + size * 0.75, 0, height),
+  ];
+  return box[2] - box[0] >= 6 && box[3] - box[1] >= 6 ? box : null;
+}
+
+/**
  * Parámetros de letterbox centrado, equivalentes a los de Ultralytics.
  * El modelo usa una entrada cuadrada fija de 640×640.
  */

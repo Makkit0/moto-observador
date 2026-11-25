@@ -17,6 +17,7 @@ import {
 } from "./metrics.js";
 import {
   canvasToBlob,
+  clamp,
   downloadBlob,
   downloadText,
   safeFileName,
@@ -59,10 +60,15 @@ const ui = {
   movementValue: el("movementValue"),
   helmetCheck: el("helmetCheck"),
   poseCheck: el("poseCheck"),
+  weaponsCheck: el("weaponsCheck"),
   trackCheck: el("trackCheck"),
   signalsCheck: el("signalsCheck"),
   faceBlurCheck: el("faceBlurCheck"),
   signalsNote: el("signalsNote"),
+  weaponsNote: el("weaponsNote"),
+  zoomRange: el("zoomRange"),
+  zoomValue: el("zoomValue"),
+  zoomResetBtn: el("zoomResetBtn"),
   detectorNote: el("detectorNote"),
   stage: el("stage"),
   liveVideo: el("liveVideo"),
@@ -120,9 +126,13 @@ const state = {
   movementThreshold: MOVEMENT_DEFAULT_THRESHOLD,
   helmetEnabled: true,
   poseEnabled: false,
+  weaponsEnabled: false,
   trackEnabled: true,
   signalsEnabled: false,
   faceBlur: false,
+  zoom: 1,
+  zoomCenterX: 0.5,
+  zoomCenterY: 0.5,
   playbackRate: 1,
   cameraStream: null,
   cameraIndex: 0,
@@ -155,7 +165,7 @@ const state = {
   imageAnalysisTimer: null,
 };
 
-const MODEL_ORDER = ["base", "helmet", "pose"];
+const MODEL_ORDER = ["base", "helmet", "pose", "weapons"];
 const modelRows = new Map();
 
 function createModelRows() {
@@ -199,6 +209,7 @@ function refreshOptionalModelBadges() {
   for (const [kind, enabled] of [
     ["helmet", state.helmetEnabled],
     ["pose", state.poseEnabled],
+    ["weapons", state.weaponsEnabled],
   ]) {
     const badge = modelRows.get(kind);
     if (!badge) continue;
@@ -298,6 +309,40 @@ function setStageSize(width, height) {
   ui.placeholder.hidden = true;
 }
 
+// Zoom digital: recorta el cuadro antes de dibujarlo y de analizarlo. La
+// resolución real de la cámara no cambia; baja la resolución efectiva.
+function sourceCrop() {
+  const zoom = clamp(Number(state.zoom) || 1, 1, 3);
+  const sw = state.sourceWidth / zoom;
+  const sh = state.sourceHeight / zoom;
+  const cx = clamp(
+    state.zoomCenterX * state.sourceWidth,
+    sw / 2,
+    state.sourceWidth - sw / 2,
+  );
+  const cy = clamp(
+    state.zoomCenterY * state.sourceHeight,
+    sh / 2,
+    state.sourceHeight - sh / 2,
+  );
+  return { sx: cx - sw / 2, sy: cy - sh / 2, sw, sh };
+}
+
+function effectiveResolution() {
+  const crop = sourceCrop();
+  return { width: Math.round(crop.sw), height: Math.round(crop.sh) };
+}
+
+function setZoomCenterFromEvent(event) {
+  if (state.zoom <= 1.01) return;
+  const rect = ui.display.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  state.zoomCenterX = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+  state.zoomCenterY = clamp((event.clientY - rect.top) / rect.height, 0, 1);
+  if (state.mode === "image") renderOnce();
+  renderStatsThrottled(true);
+}
+
 function resetMetrics() {
   state.captureMeter.reset();
   state.previewMeter.reset();
@@ -331,8 +376,19 @@ function resetScene() {
 }
 
 function drawSourceIntoDisplay() {
+  const crop = sourceCrop();
   if (state.mode === "image" && ui.stillImage.complete && ui.stillImage.naturalWidth) {
-    displayCtx.drawImage(ui.stillImage, 0, 0, state.sourceWidth, state.sourceHeight);
+    displayCtx.drawImage(
+      ui.stillImage,
+      crop.sx,
+      crop.sy,
+      crop.sw,
+      crop.sh,
+      0,
+      0,
+      state.sourceWidth,
+      state.sourceHeight,
+    );
     return true;
   }
   if (
@@ -340,7 +396,17 @@ function drawSourceIntoDisplay() {
     ui.liveVideo.readyState >= 2 &&
     ui.liveVideo.videoWidth
   ) {
-    displayCtx.drawImage(ui.liveVideo, 0, 0, state.sourceWidth, state.sourceHeight);
+    displayCtx.drawImage(
+      ui.liveVideo,
+      crop.sx,
+      crop.sy,
+      crop.sw,
+      crop.sh,
+      0,
+      0,
+      state.sourceWidth,
+      state.sourceHeight,
+    );
     return true;
   }
   return false;
@@ -368,6 +434,7 @@ function renderOverlay() {
       ageMs: age,
       stale: detectionIsStale(age),
       showAge: state.mode === "video" || state.mode === "camera",
+      showFaces: state.faceBlur,
     });
   }
   state.overlayRenderedAt = performance.now();
@@ -436,9 +503,11 @@ function startFrameWatch() {
   if (typeof video.requestVideoFrameCallback === "function") {
     const onFrame = (now) => {
       state.frameWatch.handle = null;
-      if (!state.analysisActive) return;
-      state.captureMeter.push(now);
-      state.frameSeq += 1;
+      if (!state.renderRunning) return;
+      if (state.analysisActive) {
+        state.captureMeter.push(now);
+        state.frameSeq += 1;
+      }
       state.frameWatch.kind = "rvfc";
       state.frameWatch.handle = video.requestVideoFrameCallback(onFrame);
     };
@@ -450,8 +519,12 @@ function startFrameWatch() {
   // currentTime. La métrica queda marcada como aproximada en el registro.
   const onFrame = (now) => {
     state.frameWatch.handle = null;
-    if (!state.analysisActive) return;
-    if (video.readyState >= 2 && video.currentTime !== state.lastVideoTime) {
+    if (!state.renderRunning) return;
+    if (
+      state.analysisActive &&
+      video.readyState >= 2 &&
+      video.currentTime !== state.lastVideoTime
+    ) {
       state.lastVideoTime = video.currentTime;
       state.captureMeter.push(now);
       state.frameSeq += 1;
@@ -509,7 +582,7 @@ function fpsShortfallMessage(metrics) {
 
 function statPart(label, value, className = "") {
   const span = document.createElement("span");
-  if (className) span.className = className;
+  span.className = className ? `stat ${className}` : "stat";
   const strong = document.createElement("strong");
   strong.textContent = `${label}: `;
   span.append(strong, document.createTextNode(value));
@@ -537,6 +610,15 @@ function updateStats(result) {
       ? ` · solicitada ${ui.resolutionSelect.selectedOptions[0]?.textContent || ""}`
       : "";
   parts.push(statPart("Resolución real", `${state.sourceWidth}×${state.sourceHeight}${requested}`));
+  if (state.zoom > 1.01) {
+    const effective = effectiveResolution();
+    parts.push(
+      statPart(
+        "Zoom digital",
+        `${state.zoom.toFixed(1)}× · efectiva ${effective.width}×${effective.height}`,
+      ),
+    );
+  }
   parts.push(statPart("Runtime", result.runtime || detector.describeRuntime()));
 
   if (live) {
@@ -559,7 +641,7 @@ function updateStats(result) {
         "Análisis real",
         formatFps(metrics.achievedFps),
         metrics.achievedFps && state.fpsLimit && metrics.achievedFps < state.fpsLimit * FPS_SHORTFALL_RATIO
-          ? "stat warn"
+          ? "warn"
           : "",
       ),
     );
@@ -576,7 +658,7 @@ function updateStats(result) {
       statPart(
         "Última detección",
         age === null ? "—" : `${formatAge(age)}${stale ? " · atrasada" : ""}`,
-        stale ? "stat warn" : "",
+        stale ? "warn" : "",
       ),
     );
   } else {
@@ -588,6 +670,10 @@ function updateStats(result) {
   parts.push(statPart("Base", formatMs(timings.base)));
   if (state.helmetEnabled) parts.push(statPart("Casco", formatMs(timings.helmet)));
   if (state.poseEnabled) parts.push(statPart("Pose", formatMs(timings.pose)));
+  if (state.weaponsEnabled) parts.push(statPart("Armas", formatMs(timings.weapons)));
+  if (state.scene?.counts?.rostrosMetodo) {
+    parts.push(statPart("Cabezas (pose)", String(state.scene.counts.rostrosEstimados)));
+  }
   parts.push(statPart("Cuadros analizados", String(state.analyzedFrames)));
 
   ui.stats.textContent = "";
@@ -646,6 +732,15 @@ function renderCounts(counts) {
       chip("Pose estimada", counts.posePersonas),
       chip("Pose parcial", counts.poseParcial),
       chip("Pose no determinada", counts.poseNoDeterminada),
+    );
+  }
+  if (counts.rostrosMetodo) {
+    ui.counts.append(chip("Cabezas estimadas (pose)", counts.rostrosEstimados));
+  }
+  if (state.weaponsEnabled) {
+    ui.counts.append(
+      chip("Posibles armas", counts.armas, counts.armas ? "warn" : ""),
+      chip("Fuego / blanca", `${counts.armasFuego} / ${counts.armasBlancas}`),
     );
   }
 }
@@ -708,6 +803,7 @@ function activeModelNames() {
   const names = [MODEL_DEFS.base.label];
   if (state.helmetEnabled) names.push(MODEL_DEFS.helmet.label);
   if (state.poseEnabled) names.push(MODEL_DEFS.pose.label);
+  if (state.weaponsEnabled) names.push(MODEL_DEFS.weapons.label);
   return names;
 }
 
@@ -719,6 +815,7 @@ function modelStatusList() {
     ["base", MODEL_DEFS.base.label, true],
     ["helmet", MODEL_DEFS.helmet.label, state.helmetEnabled],
     ["pose", MODEL_DEFS.pose.label, state.poseEnabled],
+    ["weapons", MODEL_DEFS.weapons.label, state.weaponsEnabled],
   ];
   return defs.map(([kind, label, enabled]) => {
     if (!enabled) return { label, status: "desactivado por el usuario" };
@@ -735,14 +832,35 @@ function analysisIntervalMs() {
 // Copia el cuadro más reciente a un canvas exclusivo de inferencia. Así la
 // vista previa puede seguir dibujando a 60 FPS sin arrastrar cajas al modelo.
 function captureAnalysisFrame() {
+  const crop = sourceCrop();
   if (state.mode === "image") {
     if (!ui.stillImage.complete || !ui.stillImage.naturalWidth) return false;
-    analysisCtx.drawImage(ui.stillImage, 0, 0, state.sourceWidth, state.sourceHeight);
+    analysisCtx.drawImage(
+      ui.stillImage,
+      crop.sx,
+      crop.sy,
+      crop.sw,
+      crop.sh,
+      0,
+      0,
+      state.sourceWidth,
+      state.sourceHeight,
+    );
     return true;
   }
   const video = ui.liveVideo;
   if (video.readyState < 2 || !video.videoWidth) return false;
-  analysisCtx.drawImage(video, 0, 0, state.sourceWidth, state.sourceHeight);
+  analysisCtx.drawImage(
+    video,
+    crop.sx,
+    crop.sy,
+    crop.sw,
+    crop.sh,
+    0,
+    0,
+    state.sourceWidth,
+    state.sourceHeight,
+  );
   state.lastAnalyzedSeq = state.frameSeq;
   return true;
 }
@@ -775,6 +893,7 @@ async function runAnalysisTick() {
         confidence: state.confidence,
         helmet: state.helmetEnabled,
         pose: state.poseEnabled,
+        weapons: state.weaponsEnabled,
       },
     );
     if (token !== state.analysisToken || !state.analysisActive) return;
@@ -784,13 +903,15 @@ async function runAnalysisTick() {
       motorcycles: result.motorcycles,
       helmets: result.helmets,
       poses: result.poses,
+      weapons: result.weapons,
       width: state.sourceWidth,
       height: state.sourceHeight,
       confidence: state.confidence,
       helmetEnabled: state.helmetEnabled,
       poseEnabled: state.poseEnabled,
       track: state.trackEnabled && (state.mode === "video" || state.mode === "camera"),
-      signalsEnabled: state.signalsEnabled && state.mode === "camera",
+      signalsEnabled:
+        state.signalsEnabled && (state.mode === "video" || state.mode === "camera"),
       movementThreshold: state.movementThreshold,
       poseError: result.errors?.pose || "",
     });
@@ -829,7 +950,8 @@ function analysisLoop() {
   const interval = analysisIntervalMs();
   if (now >= state.nextAnalysisAt) {
     if (state.analyzing) {
-      state.skippedBusy += 1;
+      // Solo tiene sentido contar turnos perdidos cuando hay un objetivo de FPS.
+      if (state.fpsLimit) state.skippedBusy += 1;
       state.nextAnalysisAt = now + Math.max(interval, 33);
     } else if (state.mode === "video" && ui.liveVideo.ended) {
       finishVideo("Fin del video");
@@ -872,6 +994,7 @@ async function analyzeImage() {
         confidence: state.confidence,
         helmet: state.helmetEnabled,
         pose: state.poseEnabled,
+        weapons: state.weaponsEnabled,
       },
     );
     if (token !== state.analysisToken || state.mode !== "image") return;
@@ -881,6 +1004,7 @@ async function analyzeImage() {
       motorcycles: result.motorcycles,
       helmets: result.helmets,
       poses: result.poses,
+      weapons: result.weapons,
       width: state.sourceWidth,
       height: state.sourceHeight,
       confidence: state.confidence,
@@ -1332,6 +1456,10 @@ async function startCamera() {
     models: modelStatusList(),
     runtime: detector.describeRuntime(),
     browser: browserDescription(),
+    signals: state.signalsEnabled,
+    weapons: state.weaponsEnabled,
+    zoom: state.zoom,
+    faceBlur: state.faceBlur,
   });
   ui.sessionStatus.textContent =
     "Sesión de cámara en curso. Al detenerla se descargará el registro TXT.";
@@ -1610,6 +1738,25 @@ function wireEvents() {
     }
   });
 
+  const applyZoom = () => {
+    if (!ui.zoomRange) return;
+    state.zoom = clamp(Number(ui.zoomRange.value) / 100, 1, 3);
+    if (ui.zoomValue) ui.zoomValue.textContent = `${state.zoom.toFixed(1)}×`;
+    if (state.mode === "image") renderOnce();
+    renderStatsThrottled(true);
+  };
+  ui.zoomRange?.addEventListener("input", applyZoom);
+  ui.zoomResetBtn?.addEventListener("click", () => {
+    state.zoom = 1;
+    state.zoomCenterX = 0.5;
+    state.zoomCenterY = 0.5;
+    if (ui.zoomRange) ui.zoomRange.value = "100";
+    if (ui.zoomValue) ui.zoomValue.textContent = "1.0×";
+    if (state.mode === "image") renderOnce();
+    renderStatsThrottled(true);
+  });
+  ui.display.addEventListener("click", setZoomCenterFromEvent);
+
   ui.confidenceRange.addEventListener("input", () => {
     state.confidence = Number(ui.confidenceRange.value) / 100;
     ui.confidenceValue.textContent = `${ui.confidenceRange.value}%`;
@@ -1661,9 +1808,20 @@ function wireEvents() {
     if (!state.signalsEnabled) pipeline.reset();
     if (ui.signalsNote) {
       ui.signalsNote.textContent = state.signalsEnabled
-        ? "Señales activas: se habilitaron pose y seguimiento. Solo funcionan en cámara y requieren persistencia; son observaciones geométricas para revisión humana."
-        : "Señales temporales desactivadas.";
+        ? "Señales activas en video o cámara: se habilitaron pose y seguimiento. Requieren persistencia (~1,5 s) y son observaciones geométricas para revisión humana; no clasifican peleas, agresión ni intención."
+        : "Señales temporales desactivadas. Las armas se controlan con su propio interruptor.";
     }
+    scheduleImageReanalysis();
+  });
+
+  ui.weaponsCheck?.addEventListener("change", () => {
+    state.weaponsEnabled = ui.weaponsCheck.checked;
+    if (ui.weaponsNote) {
+      ui.weaponsNote.textContent = state.weaponsEnabled
+        ? "Detector experimental activo. Solo marca «posible objeto con apariencia de arma — revisar»; puede fallar con juguetes, herramientas, fundas, reflejos u oclusiones. No confirma un delito ni identifica a nadie."
+        : "Detector de posibles armas desactivado. Es experimental, está desactivado por defecto y su modelo solo se descarga al activarlo.";
+    }
+    refreshOptionalModelBadges();
     scheduleImageReanalysis();
   });
 
@@ -1705,9 +1863,12 @@ async function init() {
   ui.movementValue.textContent = `${(Number(ui.movementRange.value) / 10).toFixed(1)}%`;
   state.helmetEnabled = ui.helmetCheck.checked;
   state.poseEnabled = ui.poseCheck.checked;
+  state.weaponsEnabled = ui.weaponsCheck ? ui.weaponsCheck.checked : false;
   state.trackEnabled = ui.trackCheck ? ui.trackCheck.checked : true;
   state.signalsEnabled = ui.signalsCheck ? ui.signalsCheck.checked : false;
   state.faceBlur = ui.faceBlurCheck ? ui.faceBlurCheck.checked : false;
+  state.zoom = ui.zoomRange ? clamp(Number(ui.zoomRange.value) / 100, 1, 3) : 1;
+  if (ui.zoomValue) ui.zoomValue.textContent = `${state.zoom.toFixed(1)}×`;
   state.fpsLimit = Number(ui.fpsSelect.value) || 0;
   state.playbackRate = Number(ui.playbackRateSelect?.value) || 1;
   refreshOptionalModelBadges();

@@ -32,10 +32,15 @@ Este proyecto incluye o redistribuye los siguientes componentes. Las licencias s
 - **Licencia:** MIT.
 - **Uso:** ejecución local de los modelos ONNX en WebGPU o WebAssembly.
 
-## 5. Modelo de armas
+## 5. Modelo experimental de armas `cosgun99/gun-knife-yolo11n`
 
-El detector experimental de armas del proyecto de escritorio **no se incluye** en esta versión web. No se redistribuye su peso ni su configuración. Su inclusión futura requeriría verificar licencia, origen, exportación y comportamiento.
+- **Componente:** `models/weapons.onnx`, exportado desde el checkpoint `best.pt` del modelo de terceros con Ultralytics 8.4.192, `imgsz=640`, `opset=17`, `simplify=True` y lote 1.
+- **Origen declarado en los metadatos del checkpoint:** `cosgun99/gun-knife-yolo11n`; descripción con la ruta local `C:\Users\Muhammed\Desktop\Gun_Knife_Final_Dataset\data.yaml`.
+- **Licencia declarada:** AGPL-3.0 en los metadatos del checkpoint. No se localizaron fuentes públicas del conjunto de datos ni una licencia independiente del dataset; **la procedencia y los términos del dataset no están verificados**.
+- **Clases observadas:** `0 = gun`, `1 = knife`. Salida `[1, 6, 8400]`.
+- **Uso en este proyecto:** componente **experimental, desactivado por defecto**. Solo dibuja cajas discontinuas y etiquetas neutrales («posible arma de fuego — revisar», «posible arma blanca (cuchillo) — revisar»). No confirma un delito, no identifica personas, no automatiza decisiones y no debe usarse como prueba.
+- **Advertencia:** puede confundir juguetes, herramientas, fundas, teléfonos, reflejos u oclusiones. Su precisión, sesgos y condiciones de uso no están verificados. No redistribuyas el sitio con fines comerciales ni lo uses institucionalmente sin una revisión legal independiente.
 
 ## 6. Marcas y responsabilidad
 
-Los nombres de productos y proyectos pertenecen a sus titulares. Este proyecto no está afiliado a Ultralytics, Microsoft, Hugging Face ni Roboflow. Se ofrece sin garantías, para observación y revisión humana; no determina infracciones ni identifica personas.
+Los nombres de productos y proyectos pertenecen a sus titulares. Este proyecto no está afiliado a Ultralytics, Microsoft, Hugging Face, Roboflow ni al autor del modelo de armas. Se ofrece sin garantías, para observación y revisión humana; no determina infracciones ni identifica personas.

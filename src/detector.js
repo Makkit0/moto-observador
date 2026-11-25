@@ -29,6 +29,15 @@ export const MODEL_DEFS = {
     classes: [0],
     task: "pose",
   },
+  weapons: {
+    // Modelo experimental de terceros. Solo señala posibles objetos con
+    // apariencia de arma; no confirma un delito ni identifica a nadie.
+    label: "Posibles armas (experimental)",
+    url: "models/weapons.onnx",
+    size: "10.1 MB",
+    classes: [0, 1],
+    task: "detect",
+  },
 };
 
 export function helmetState(name) {
@@ -45,6 +54,24 @@ export function helmetState(name) {
     return "CON CASCO";
   }
   return "INDETERMINADO";
+}
+
+export function weaponLabel(name, classId) {
+  const key = normalizeName(name);
+  if (key.includes("knife") || key.includes("cuchillo") || key.includes("blade")) {
+    return "posible arma blanca (cuchillo) — revisar";
+  }
+  if (
+    key.includes("gun") ||
+    key.includes("pistol") ||
+    key.includes("rifle") ||
+    key.includes("firearm")
+  ) {
+    return "posible arma de fuego — revisar";
+  }
+  return classId === 1
+    ? "posible arma blanca (cuchillo) — revisar"
+    : "posible arma de fuego — revisar";
 }
 
 function parseNames(raw) {
@@ -243,6 +270,22 @@ export class Detector {
         throw new Error("El modelo de casco no declara clases de casco reconocibles.");
       }
     }
+    if (kind === "weapons") {
+      const values = Object.values(names).map(normalizeName);
+      if (
+        !values.some(
+          (value) =>
+            value.includes("gun") ||
+            value.includes("knife") ||
+            value.includes("pistol") ||
+            value.includes("rifle"),
+        )
+      ) {
+        throw new Error(
+          "El modelo de armas no declara clases gun/knife reconocibles; se evita usarlo a ciegas.",
+        );
+      }
+    }
   }
 
   async runSession(kind, tensor) {
@@ -362,7 +405,12 @@ export class Detector {
    * Ejecuta el modelo base y, opcionalmente, casco y pose sobre el mismo
    * cuadro. Devuelve detecciones en coordenadas de la fuente original.
    */
-  async analyze(source, width, height, { confidence = 0.25, helmet = false, pose = false } = {}) {
+  async analyze(
+    source,
+    width,
+    height,
+    { confidence = 0.25, helmet = false, pose = false, weapons = false } = {},
+  ) {
     const analyzeStarted = performance.now();
     await this.loadModel("base");
     const preprocessStarted = performance.now();
@@ -371,6 +419,7 @@ export class Detector {
       base: 0,
       helmet: 0,
       pose: 0,
+      weapons: 0,
       preprocess: performance.now() - preprocessStarted,
       total: 0,
     };
@@ -431,6 +480,35 @@ export class Detector {
       }
     }
 
+    let weaponItems = [];
+    if (weapons) {
+      started = performance.now();
+      try {
+        const weaponOutput = await this.runSession("weapons", prep.tensor);
+        timings.weapons = performance.now() - started;
+        weaponItems = this.decodeDetect(
+          weaponOutput[Object.keys(weaponOutput)[0]],
+          prep.params,
+          width,
+          height,
+          confidence,
+          MODEL_DEFS.weapons.classes,
+        ).map((item) => {
+          const names = this.metadata.weapons?.names || {};
+          const name = names[item.classId] || (item.classId === 1 ? "knife" : "gun");
+          return {
+            ...item,
+            kind: "weapon",
+            label: weaponLabel(name, item.classId),
+            className: normalizeName(name),
+          };
+        });
+      } catch (error) {
+        errors.weapons = error.message || String(error);
+        this.onModelStatus("weapons", "error", errors.weapons);
+      }
+    }
+
     return {
       persons: baseItems
         .filter((item) => item.classId === 0)
@@ -440,6 +518,7 @@ export class Detector {
         .map((item) => ({ ...item, kind: "motorcycle", label: "Motocicleta" })),
       helmets,
       poses,
+      weapons: weaponItems,
       timings: { ...timings, total: performance.now() - analyzeStarted },
       errors,
       runtime: this.describeRuntime(),

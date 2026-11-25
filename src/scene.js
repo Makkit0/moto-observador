@@ -6,6 +6,7 @@ import {
   boxCenter,
   boxIou,
   containment,
+  estimateHeadBox,
   expandBox,
   intersectionArea,
 } from "./utils.js";
@@ -37,6 +38,9 @@ export const SIGNAL_MIN_OBSERVATIONS = 5;
 export const SIGNAL_CLOSE_MS = 2000;
 export const SIGNAL_MIN_CONFIDENCE = 0.35;
 export const SIGNAL_MIN_DISPLACEMENT_RATIO = 0.06;
+export const SIGNAL_CONFLICT_ACTIVITY = 0.07;
+export const SIGNAL_CONFLICT_DISTANCE = 0.45;
+export const WEAPON_ASSOC_MIN_SCORE = 0.35;
 
 function deduplicate(detections) {
   const kept = [];
@@ -410,7 +414,40 @@ function motorcycleHelmetSummary(persons) {
   return "Casco: mixto (revisar)";
 }
 
-function buildEvents(persons, motorcycles) {
+function associateWeapons(weapons, persons) {
+  const items = weapons.map((weapon) => ({
+    ...weapon,
+    associatedTrack: null,
+    ambiguous: false,
+  }));
+  for (const weapon of items) {
+    if (weapon.score < WEAPON_ASSOC_MIN_SCORE) continue;
+    const [wx, wy] = boxCenter(weapon.box);
+    const candidates = [];
+    persons.forEach((person) => {
+      if (person.score < PERSON_ASSOC_MIN_CONF) return;
+      const expanded = expandBox(person.box, 0.06);
+      if (wx < expanded[0] || wx > expanded[2] || wy < expanded[1] || wy > expanded[3]) {
+        return;
+      }
+      const [px, py] = boxCenter(person.box);
+      const height = Math.max(1, person.box[3] - person.box[1]);
+      candidates.push({ person, distance: Math.hypot(wx - px, wy - py) / height });
+    });
+    if (!candidates.length) continue;
+    candidates.sort((a, b) => a.distance - b.distance);
+    if (candidates.length > 1 && candidates[1].distance - candidates[0].distance < 0.12) {
+      weapon.ambiguous = true;
+    }
+    const person = candidates[0].person;
+    weapon.associatedTrack = person.trackId ?? null;
+    if (!person.weapons) person.weapons = [];
+    person.weapons.push(weapon);
+  }
+  return items;
+}
+
+function buildEvents(persons, motorcycles, weapons = []) {
   const events = [];
   for (const person of persons) {
     if (person.state === "SIN CASCO") {
@@ -448,6 +485,16 @@ function buildEvents(persons, motorcycles) {
         detail: "asociación espacial, no identifica quién conduce",
       });
     }
+  }
+  for (const weapon of weapons) {
+    events.push({
+      type: weapon.label || "posible objeto con apariencia de arma — revisar",
+      trackId: weapon.associatedTrack,
+      confidence: weapon.score,
+      detail: weapon.ambiguous
+        ? "detección experimental; asociación ambigua entre personas; revisar"
+        : "detección experimental; señal incierta, no confirma un delito",
+    });
   }
   return events;
 }
@@ -516,7 +563,37 @@ function poseSignalObservations(person, width, height) {
   return observations;
 }
 
-function proximityObservations(persons) {
+function trackActivity(person, poseHistory, width, height) {
+  const diagonal = Math.hypot(width, height);
+  if (diagonal <= 0 || person.trackId === null) return 0;
+  let activity = 0;
+  const history = poseHistory.get(person.trackId);
+  if (history && history.length >= 2) {
+    const newest = history[history.length - 1];
+    const oldest = history[0];
+    for (const key of ["wrist", "ankle"]) {
+      const first = oldest[key];
+      const last = newest[key];
+      if (!first || !last) continue;
+      activity = Math.max(
+        activity,
+        Math.hypot(last[0] - first[0], last[1] - first[1]) / diagonal,
+      );
+    }
+  }
+  const trail = person.trail || [];
+  if (trail.length >= 3) {
+    const first = trail[trail.length - 3];
+    const last = trail[trail.length - 1];
+    activity = Math.max(
+      activity,
+      Math.hypot(last[0] - first[0], last[1] - first[1]) / diagonal,
+    );
+  }
+  return activity;
+}
+
+function conflictObservations(persons, poseHistory, width, height) {
   const observations = [];
   for (let first = 0; first < persons.length; first += 1) {
     for (let second = first + 1; second < persons.length; second += 1) {
@@ -528,16 +605,24 @@ function proximityObservations(persons) {
       const [ax, ay] = boxCenter(a.box);
       const [bx, by] = boxCenter(b.box);
       const distance = Math.hypot(ax - bx, ay - by);
-      const reference = 0.45 * ((heightA + heightB) / 2);
+      const reference = SIGNAL_CONFLICT_DISTANCE * ((heightA + heightB) / 2);
       if (distance > reference) continue;
+      const activity = Math.max(
+        trackActivity(a, poseHistory, width, height),
+        trackActivity(b, poseHistory, width, height),
+      );
+      const intense = activity >= SIGNAL_CONFLICT_ACTIVITY;
       const confidence = Math.min(a.score, b.score);
       for (const person of [a, b]) {
         observations.push({
-          type: "personas muy próximas (posible interacción física)",
+          type: intense
+            ? "posible interacción física intensa (revisar)"
+            : "personas muy próximas (posible interacción física)",
           trackId: person.trackId,
           confidence,
-          detail:
-            "proximidad espacial entre trayectorias; no implica agresión, delito ni sometimiento",
+          detail: intense
+            ? "proximidad + movimiento rápido entre dos trayectorias; puede ser juego, deporte, baile, saludo, ayuda u oclusión"
+            : "proximidad espacial entre trayectorias; no implica agresión, delito ni sometimiento",
         });
       }
     }
@@ -635,11 +720,13 @@ export class ScenePipeline {
     motorcycles = [],
     helmets = [],
     poses = [],
+    weapons = [],
     width,
     height,
     confidence = 0.25,
     helmetEnabled = false,
     poseEnabled = false,
+    weaponsEnabled = false,
     track = false,
     signalsEnabled = false,
     movementThreshold = MOVEMENT_DEFAULT_THRESHOLD,
@@ -661,6 +748,7 @@ export class ScenePipeline {
       keypoints: [],
       poseState: "",
       poseNote: "",
+      weapons: [],
     }));
     if (track) this.tracker.update(detections, width, height, movementThreshold);
 
@@ -710,6 +798,11 @@ export class ScenePipeline {
       });
     }
 
+    const weaponItems = associateWeapons(weapons, personList);
+    const faces = personList
+      .map((person) => estimateHeadBox(person, width, height))
+      .filter(Boolean);
+
     const { assignments, uncertain } = associateOccupants(personList, motorcycleList);
     motorcycleList.forEach((motorcycle, index) => {
       const assigned = assignments[index];
@@ -740,7 +833,7 @@ export class ScenePipeline {
     if (signalsEnabled && track) {
       const observations = [
         ...personList.flatMap((person) => poseSignalObservations(person, width, height)),
-        ...proximityObservations(personList),
+        ...conflictObservations(personList, this.poseHistory, width, height),
         ...displacementObservations(personList, width, height),
       ];
       signalEvents.push(...this.updateSignals(observations, now));
@@ -784,6 +877,14 @@ export class ScenePipeline {
       poseNoDeterminada: personList.filter((person) => person.poseState === "Pose: no determinada")
         .length,
       poseError: poseEnabled && !poseAnalysed ? poseError : "",
+      armas: weaponItems.length,
+      armasAnalizadas: weaponsEnabled,
+      armasFuego: weaponItems.filter((weapon) => weapon.className === "gun").length,
+      armasBlancas: weaponItems.filter((weapon) => weapon.className === "knife").length,
+      armasAsociadas: weaponItems.filter((weapon) => weapon.associatedTrack !== null).length,
+      armasAmbiguas: weaponItems.filter((weapon) => weapon.ambiguous).length,
+      rostrosEstimados: faces.length,
+      rostrosMetodo: poseEnabled && poseAnalysed ? "pose (aproximado, sin identidad)" : "",
       motosResumen: motorcycleList.map((motorcycle, index) => ({
         index: index + 1,
         trackId: motorcycle.trackId,
@@ -793,12 +894,22 @@ export class ScenePipeline {
         helmet: motorcycle.helmetSummary || "Casco: no analizado",
         movement: motorcycle.movement || "",
       })),
-      eventos: [...buildEvents(personList, motorcycleList), ...signalEvents],
+      eventos: [
+        ...buildEvents(personList, motorcycleList, weaponItems),
+        ...signalEvents,
+      ],
       senalesTemporales: signalEvents.length,
       senalesActivas: this.signals.size,
       seguimientoActivo: track,
     };
 
-    return { persons: personList, motorcycles: motorcycleList, helmets, counts };
+    return {
+      persons: personList,
+      motorcycles: motorcycleList,
+      helmets,
+      weapons: weaponItems,
+      faces,
+      counts,
+    };
   }
 }

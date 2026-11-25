@@ -6,10 +6,10 @@
     <title>Moto Observador — análisis local en el navegador</title>
     <meta
       name="description"
-      content="Analiza imágenes, videos y cámara local para observar personas, motocicletas, ocupantes estimados, casco y pose. Todo ocurre en tu navegador."
+      content="Analiza imágenes, videos y cámara local para observar personas, motocicletas, ocupantes, casco, pose, posibles armas y señales temporales de interacción. Todo ocurre en tu navegador."
     />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20261123c" />
+    <link rel="stylesheet" href="styles.css?v=20261125a" />
   </head>
   <body>
     <a class="skip-link" href="#contenido">Saltar al contenido</a>
@@ -23,15 +23,17 @@
         <p class="eyebrow">Análisis local · sin servidor · sin cuentas</p>
         <h1>Moto Observador <span class="tag">web</span></h1>
         <p class="lead">
-          Observa personas, motocicletas, ocupantes estimados, casco y pose corporal
-          opcional en una imagen, un video o una cámara local.
+          Observa personas, motocicletas, ocupantes estimados, casco, pose corporal,
+          posibles objetos con apariencia de arma y señales temporales de interacción
+          para revisión humana. Todo se procesa en tu navegador.
         </p>
         <p class="privacy-note">
           <strong>Privacidad:</strong> las imágenes, los videos y los cuadros de la
           cámara se procesan en tu navegador. No se suben a GitHub ni a otro servidor,
-          no se guardan por defecto y no se usa analítica, reconocimiento facial ni
-          lectura de placas. La cámara solo se activa cuando pulsas el botón y se
-          detiene cuando lo pides.
+          no se guardan por defecto y no se usa analítica, reconocimiento facial,
+          identificación de personas ni lectura de placas. El difuminado de
+          cabeza/rostro es opcional y aproximado. La cámara solo se activa cuando
+          pulsas el botón y se detiene cuando lo pides.
         </p>
       </div>
     </header>
@@ -196,6 +198,17 @@
             <span>Umbral de movimiento: <output id="movementValue">1.5%</output></span>
             <input id="movementRange" type="range" min="5" max="100" step="5" value="15" />
           </div>
+          <div class="field">
+            <span>Zoom digital: <output id="zoomValue">1.0×</output></span>
+            <div class="zoom-row">
+              <input id="zoomRange" type="range" min="100" max="300" step="10" value="100" />
+              <button id="zoomResetBtn" class="button tiny" type="button">Centrar</button>
+            </div>
+            <p class="hint tiny-hint">
+              Recorta el cuadro para acercarlo. Con zoom &gt; 1× puedes pulsar en el visor
+              para centrar la zona. Reduce la resolución efectiva, no la de la cámara.
+            </p>
+          </div>
         </div>
         <div class="check-row">
           <label class="check">
@@ -207,25 +220,42 @@
             <span>Estimar pose corporal (opcional, 17 puntos COCO)</span>
           </label>
           <label class="check">
+            <input id="weaponsCheck" type="checkbox" />
+            <span>Posibles armas de fuego o blancas (experimental)</span>
+          </label>
+          <label class="check">
             <input id="trackCheck" type="checkbox" checked />
             <span>Seguir trayectorias mientras se analiza video o cámara</span>
           </label>
           <label class="check">
             <input id="signalsCheck" type="checkbox" />
-            <span>Mostrar señales geométricas persistentes (solo cámara)</span>
+            <span>Señales temporales de posible interacción (experimental)</span>
           </label>
           <label class="check">
             <input id="faceBlurCheck" type="checkbox" />
-            <span>Pixelar región aproximada de la cabeza (requiere pose)</span>
+            <span>Difuminar región aproximada de cabeza/rostro (requiere pose)</span>
           </label>
         </div>
-        <p id="signalsNote" class="hint">Señales temporales desactivadas. No detectan peleas, armas, intención, asaltos ni intervenciones policiales.</p>
+        <p id="signalsNote" class="hint">
+          Señales temporales desactivadas. Cuando se activan, marcan proximidad y
+          movimiento intenso entre dos trayectorias tras ~1,5 s de persistencia. No
+          clasifican peleas, agresión, intención ni rol de ninguna persona: pueden ser
+          juego, deporte, baile, saludo, ayuda u oclusión.
+        </p>
+        <p id="weaponsNote" class="hint">
+          Detector de posibles armas desactivado. Es experimental, está desactivado por
+          defecto y su modelo solo se descarga al activarlo. Marca «posible objeto con
+          apariencia de arma — revisar»; puede fallar con juguetes, herramientas, fundas,
+          reflejos u oclusiones. No confirma un delito ni identifica a nadie.
+        </p>
         <p id="detectorNote" class="hint">
           La pose está desactivada por defecto y su modelo solo se descarga al
           activarla. La primera preparación de la pose puede tardar decenas de
           segundos en algunos equipos; después suele ser rápida. El casco se asocia
           geométricamente a cada persona; la ausencia de una detección no demuestra
-          que no haya casco.
+          que no haya casco. El detector de armas es un modelo de terceros con licencia
+          y procedencia documentadas en el README/NOTICE; no se usa para acusar ni
+          automatizar decisiones.
         </p>
       </section>
 
@@ -300,13 +330,16 @@
       <div class="wrap">
         <p>
           Moto Observador web · Código fuente disponible en el repositorio. Modelos de
-          Ultralytics (AGPL-3.0 o licencia comercial) y del detector de casco
-          <em>iam-tsr/yolov8n-helmet-detection</em> (MIT declarada). Consulta el README
-          para límites, licencias y tamaños.
+          Ultralytics (AGPL-3.0 o licencia comercial), detector de casco
+          <em>iam-tsr/yolov8n-helmet-detection</em> (MIT declarada) y detector
+          experimental de armas <em>cosgun99/gun-knife-yolo11n</em> (checkpoint AGPL-3.0;
+          procedencia del conjunto de datos no verificada). Consulta el README y
+          NOTICE para límites, licencias y tamaños.
         </p>
         <p class="muted">
           Herramienta de observación para revisión humana. No identifica personas, no
-          lee placas y no determina infracciones.
+          lee placas y no determina infracciones. Las señales de armas e interacción son
+          inciertas y requieren revisión manual.
         </p>
       </div>
     </footer>
@@ -356,6 +389,6 @@
       })();
     </script>
     <script src="vendor/ort/ort.min.js"></script>
-    <script type="module" src="src/main.js?v=20261123c"></script>
+    <script type="module" src="src/main.js?v=20261125a"></script>
   </body>
 </html>

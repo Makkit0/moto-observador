@@ -43,6 +43,10 @@ export class SessionLog {
     models = [],
     runtime = "",
     browser = "",
+    signals = false,
+    weapons = false,
+    zoom = 1,
+    faceBlur = false,
   } = {}) {
     if (resolution) this.setResolution(resolution.width, resolution.height, true);
     this.lines.push(
@@ -59,12 +63,38 @@ export class SessionLog {
       this.lines.push(`- ${model.label}: ${model.status}`);
       if (model.status.startsWith("no disponible")) this.unavailable.add(model.label);
     }
+    this.lines.push(
+      `Señales temporales: ${
+        signals
+          ? "activadas (heurísticas geométricas con persistencia; requieren revisión humana)"
+          : "desactivadas"
+      }`,
+    );
+    this.lines.push(
+      `Detector de posibles armas: ${
+        weapons ? "activado (experimental; no confirma delitos)" : "desactivado"
+      }`,
+    );
+    this.lines.push(`Zoom digital: ${zoom > 1.01 ? `${zoom.toFixed(1)}×` : "1.0×"}`);
+    this.lines.push(
+      `Difuminado de cabeza/rostro: ${
+        faceBlur ? "activado (aproximado con pose; sin identificación)" : "desactivado"
+      }`,
+    );
     this.lines.push("--- Señales observables (revisión humana) ---");
   }
 
   setResolution(width, height, quiet = false) {
     if (!width || !height) return;
-    this.resolution = [Math.round(width), Math.round(height)];
+    const next = [Math.round(width), Math.round(height)];
+    if (
+      this.resolution &&
+      this.resolution[0] === next[0] &&
+      this.resolution[1] === next[1]
+    ) {
+      return;
+    }
+    this.resolution = next;
     if (!quiet) this.lines.push(`Resolución real: ${this.resolution[0]}×${this.resolution[1]}`);
   }
 
@@ -81,12 +111,15 @@ export class SessionLog {
   }
 
   summaryText(counts) {
-    return (
+    const base =
       `personas ${counts.personas}, motos ${counts.motocicletas}, ` +
       `ocupantes 1/2/>2 ${counts.motos1}/${counts.motos2}/${counts.motosMas2}, ` +
       `casco con/sin/incierto ${counts.conCasco}/${counts.sinCasco}/${counts.indeterminado}, ` +
-      `movimiento ${counts.enMovimiento}, pose ${counts.posePersonas}`
-    );
+      `movimiento ${counts.enMovimiento}, pose ${counts.posePersonas}`;
+    const extra = [];
+    if (counts.rostrosMetodo) extra.push(`cabezas estimadas ${counts.rostrosEstimados}`);
+    if (counts.armasAnalizadas) extra.push(`posibles armas ${counts.armas}`);
+    return extra.length ? `${base}, ${extra.join(", ")}` : base;
   }
 
   eventLine(state, event, duration) {
